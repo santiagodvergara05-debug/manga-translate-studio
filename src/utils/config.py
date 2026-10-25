@@ -10,7 +10,7 @@ class Config:
     """Centralized constant registry for application parameters and visual themes."""
 
     APP_NAME: str = "Manga Translate Studio"
-    VERSION: str = "1.5.0 BETA"
+    VERSION: str = "1.5.0"
 
     # Deep Obsidian Theme Palette
     COLOR_BG: str = "#0b0b0e"
