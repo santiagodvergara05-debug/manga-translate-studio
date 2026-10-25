@@ -1,15 +1,14 @@
 import os
 from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QWidget, QHBoxLayout, 
-    QLabel, QProgressBar, QFrame
+    QLabel, QProgressBar
 )
-from PySide6.QtGui import QIcon, QPixmap, QPainter, QColor
+from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QSize, QByteArray
 
-
 # ==============================================================================
-# SVGs EN CÓDIGO (IDÉNTICOS AL REPOSITORIO DE MANGA CLEANER)
+# SVGs EN MEMORIA (IDÉNTICOS AL REPOSITORIO DE MANGA CLEANER + NUEVOS ESTADOS)
 # ==============================================================================
 SVG_ICONS = {
     "unmodified": """<svg viewBox="0 0 100 100">
@@ -24,6 +23,24 @@ SVG_ICONS = {
     "ready": """<svg viewBox="0 0 100 100">
         <circle cx="50" cy="50" r="45" fill="#00e676" stroke="#1a1a20" stroke-width="6"/>
         <path d="M28 52 L44 68 L74 34" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>""",
+
+    "empty": """<svg viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="#202c38" stroke="#1a1a20" stroke-width="6"/>
+        <path d="M72 48 C72 35 62 25 50 25 C38 25 28 35 28 48 C28 54 31 59 36 63 L34 74 L46 68 C47.3 68.3 48.6 68.5 50 68.5 C62 68.5 72 58.5 72 48 Z" fill="#121820" stroke="#00d2ff" stroke-width="5" stroke-linejoin="round"/>
+        <line x1="40" y1="48" x2="60" y2="48" stroke="#8faecf" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 8"/>
+    </svg>""",
+
+    "busy": """<svg viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="#ffd600" stroke="#1a1a20" stroke-width="6"/>
+        <path d="M50 22 V50 L68 62" fill="none" stroke="#1a1a20" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>""",
+
+    "safety": """<svg viewBox="0 0 100 100">
+        <circle cx="50" cy="50" r="45" fill="#2a0d14" stroke="#ff1744" stroke-width="6"/>
+        <path d="M50 22 L30 30 V50 C30 63 38 74 50 78 C62 74 70 63 70 50 V30 Z" fill="#ff1744" stroke="#1a1a20" stroke-width="3"/>
+        <line x1="50" y1="36" x2="50" y2="54" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
+        <circle cx="50" cy="65" r="4.5" fill="#ffffff"/>
     </svg>""",
 
     "modified": """<svg viewBox="0 0 100 100">
@@ -46,16 +63,16 @@ SVG_ICONS = {
 
 
 class IconProvider:
-    """Genera y cachea QIcons limpios a partir de los vectores SVG."""
+    """Genera y cachea QIcons limpios en memoria a partir de los vectores SVG."""
     _cache = {}
 
     @classmethod
     def get(cls, state_key: str, size: int = 18) -> QIcon:
-        key = (state_key, size)
+        key = (state_key.lower().strip(), size)
         if key in cls._cache:
             return cls._cache[key]
 
-        svg_str = SVG_ICONS.get(state_key, SVG_ICONS["unmodified"])
+        svg_str = SVG_ICONS.get(key[0], SVG_ICONS["unmodified"])
         byte_array = QByteArray(svg_str.encode("utf-8"))
         renderer = QSvgRenderer(byte_array)
 
@@ -105,19 +122,24 @@ class FileListWidget(QListWidget):
         fname = os.path.basename(full_path)
         item = QListWidgetItem(IconProvider.get("unmodified"), fname)
         item.setData(Qt.UserRole, full_path)
+        item.setToolTip(f"{fname}\nStatus: Unmodified")
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Unchecked)
         self.addItem(item)
 
-    def update_item_state(self, full_path: str, state_str: str):
-        """Actualiza el icono según el estado (waiting, ready, modified, error, lock, unmodified)."""
-        clean_state = state_str.lower()
+    def update_item_state(self, full_path: str, state_str: str, tooltip_msg: str = ""):
+        clean_state = state_str.lower().strip()
         icon = IconProvider.get(clean_state)
+        fname = os.path.basename(full_path)
 
         for i in range(self.count()):
             it = self.item(i)
             if it.data(Qt.UserRole) == full_path:
                 it.setIcon(icon)
+                if tooltip_msg:
+                    it.setToolTip(f"{fname}\nStatus: {tooltip_msg}")
+                else:
+                    it.setToolTip(f"{fname}\nStatus: {clean_state.capitalize()}")
                 break
 
 

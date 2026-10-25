@@ -4,20 +4,30 @@ import json
 import subprocess
 import unicodedata
 
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFileDialog, QMessageBox, QComboBox, QLineEdit, QScrollArea, 
     QFrame, QDialog, QTextEdit, QTabWidget, QCheckBox, QInputDialog
 )
 from PySide6.QtCore import Qt
+
 from src.utils.config import Config
 from src.utils.paths import Paths
 from src.utils.logger import logger
+from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.backend.ai_client import FetchModelsWorker, MultimodalTranslationWorker, AIClientManager
+from src.backend.languages import (
+    get_source_display_names, 
+    get_target_display_names, 
+    is_asian_source, 
+    get_sfx_rule_for_target
+)
 
 
 def _nfc(s: str) -> str:
-    """Normalizes Unicode strings to NFC standard for byte-level compatibility with Manga Cleaner."""
+    """Normalizes Unicode strings to NFC standard for strict compatibility with Manga Cleaner."""
     return unicodedata.normalize("NFC", s) if s else ""
 
 
@@ -27,8 +37,6 @@ READING_ORDER = {
     "Comic": "Western format: left-to-right, top-to-bottom.",
     "Manhua": "Vertical scroll: top-to-bottom, left-to-right within the same row.",
 }
-
-ASIAN_SOURCES = ("korean", "japanese", "chinese")
 
 DEFAULT_CORE_RULES = r"""# CORE EXTRACTION ENGINE
 Extract every text entity on the attached page, following the reading order given in ACTIVE MEDIUM:
@@ -66,16 +74,14 @@ class CreateScriptDialog(QDialog):
         layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(10)
 
-        # Series Title Input
         lbl_title = QLabel("Series Title:")
         lbl_title.setStyleSheet("font-size: 11px; font-weight: bold; color: #00d2ff;")
         self.txt_title = QLineEdit()
-        self.txt_title.setPlaceholderText("e.g. Fui mordida por el perro que abandone")
+        self.txt_title.setPlaceholderText("e.g. My Favorite Webtoon Series")
         self.txt_title.setText(default_series)
         self.txt_title.setStyleSheet("background-color: #121218; border: 1px solid #2a2a35; padding: 5px; font-size: 11px;")
         self.txt_title.textChanged.connect(self._update_preview)
 
-        # Chapter Number Input
         lbl_chapter = QLabel("Chapter:")
         lbl_chapter.setStyleSheet("font-size: 11px; font-weight: bold; color: #00d2ff;")
         self.txt_chapter = QLineEdit()
@@ -84,7 +90,6 @@ class CreateScriptDialog(QDialog):
         self.txt_chapter.setStyleSheet("background-color: #121218; border: 1px solid #2a2a35; padding: 5px; font-size: 11px;")
         self.txt_chapter.textChanged.connect(self._update_preview)
 
-        # Filename Preview Label
         self.lbl_preview = QLabel("File: ")
         self.lbl_preview.setStyleSheet("color: #888899; font-size: 10px; font-style: italic;")
 
@@ -94,7 +99,6 @@ class CreateScriptDialog(QDialog):
         layout.addWidget(self.txt_chapter)
         layout.addWidget(self.lbl_preview)
 
-        # Action Buttons
         btn_layout = QHBoxLayout()
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
@@ -208,7 +212,7 @@ class RulesDialog(QDialog):
 
 
 # //////////////////////////////////////////////////////#
-#   SCRIPT ENGINE (100% COMPATIBLE CON MANGA CLEANER)  #
+#   SCRIPT ENGINE (100% COMPATIBLE WITH MANGA CLEANER) #
 # //////////////////////////////////////////////////////#
 
 class TranslationScriptEngine:
@@ -411,7 +415,7 @@ class TranslatorPanel(QWidget):
             provider = data.get("provider", "Gemini")
             mode = data.get("mode", "Manhwa")
             src_lang = data.get("src_lang", "English")
-            tgt_lang = data.get("tgt_lang", "Spanish (Neutro)")
+            tgt_lang = data.get("tgt_lang", "Spanish (Neutral)")
 
             if "gemini" in data:
                 g_data = data["gemini"]
@@ -445,13 +449,15 @@ class TranslatorPanel(QWidget):
             if m_idx >= 0:
                 self.mode_combo.setCurrentIndex(m_idx)
 
-            s_idx = self.src_lang_combo.findText(src_lang)
-            if s_idx >= 0:
-                self.src_lang_combo.setCurrentIndex(s_idx)
+            for i in range(self.src_lang_combo.count()):
+                if src_lang.lower() in self.src_lang_combo.itemText(i).lower():
+                    self.src_lang_combo.setCurrentIndex(i)
+                    break
 
-            t_idx = self.tgt_lang_combo.findText(tgt_lang)
-            if t_idx >= 0:
-                self.tgt_lang_combo.setCurrentIndex(t_idx)
+            for i in range(self.tgt_lang_combo.count()):
+                if tgt_lang.lower() in self.tgt_lang_combo.itemText(i).lower():
+                    self.tgt_lang_combo.setCurrentIndex(i)
+                    break
 
             self.chk_lan_mode.setChecked(self.ollama_lan_mode)
             self._update_fields_for_provider()
@@ -507,14 +513,13 @@ class TranslatorPanel(QWidget):
 
             self.update_token_estimate()
         except Exception as e:
-            logger.error(f"Error saving session: {e}")
+            logger.error(f"Error saving session config: {e}")
 
     def get_full_prompt(self) -> str:
         src = self.src_lang_combo.currentText()
         tgt = self.tgt_lang_combo.currentText()
         medium = self.mode_combo.currentText()
-        tgt_name = tgt.split("(")[0].strip()
-        asian_src = src.split("(")[0].strip().lower() in ASIAN_SOURCES
+        asian_src = is_asian_source(src)
 
         medium_block = (
             f"[ACTIVE MEDIUM: {medium.upper()}]\n"
@@ -526,17 +531,7 @@ class TranslatorPanel(QWidget):
             f"- Target language: {tgt} (fluid, natural, high-quality scanlation)"
         )
 
-        sfx_rule = (
-            "SFX RULE\n"
-            f'Keep the exact text in "original". In "direct" write the {tgt_name} comic onomatopoeia '
-            "in uppercase; never leave it untouched unless that is how it is used in the target language."
-        )
-        if tgt_name == "Spanish":
-            sfx_rule += " Examples: ¡FUSH!, ¡PAM!, ¡CRASH!."
-        sfx_rule += " If it describes an action rather than a sound, use a short action instead."
-        if asian_src:
-            sfx_rule += ' In "sfx_en" give the usual English comic equivalent (e.g. THUD, FWOOSH).'
-
+        sfx_rule = get_sfx_rule_for_target(tgt, asian_src)
         sfx_en_line = (',\n    "sfx_en": "English equivalent for SFX, otherwise empty string"'
                        if asian_src else "")
         schema_block = (
@@ -593,7 +588,7 @@ class TranslatorPanel(QWidget):
         prompt = self.get_full_prompt()
         path = self.mw.current_img_path
         total, txt_tok, img_tok = AIClientManager.estimate_tokens(prompt, path)
-        self.lbl_token_counter.setText(f"⚡ Tokens est.: ~{total:,} (Texto: ~{txt_tok:,} | Img: ~{img_tok:,})")
+        self.lbl_token_counter.setText(f"⚡ Est. Tokens: ~{total:,} (Text: ~{txt_tok:,} | Img: ~{img_tok:,})")
 
     def init_ui(self):
         lay = QVBoxLayout(self)
@@ -609,8 +604,15 @@ class TranslatorPanel(QWidget):
         lay.addWidget(lbl_api)
 
         row_top = QHBoxLayout()
+
+        def _get_provider_icon(name: str):
+            p = os.path.join(Paths.BUNDLE_DIR, "assets", "icon_provider", f"{name.lower()}.svg")
+            return QIcon(p) if os.path.exists(p) else QIcon()
+
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["Gemini", "Ollama"])
+        self.provider_combo.setIconSize(QSize(18, 18))
+        self.provider_combo.addItem(_get_provider_icon("gemini"), "Gemini")
+        self.provider_combo.addItem(_get_provider_icon("ollama"), "Ollama")
         self.provider_combo.currentIndexChanged.connect(self._on_provider_change)
 
         self.mode_combo = QComboBox()
@@ -626,17 +628,18 @@ class TranslatorPanel(QWidget):
         row_top.addWidget(self.btn_rules, 1)
         lay.addLayout(row_top)
 
+        # Extended Language Selectors
         row_lang = QHBoxLayout()
-        lbl_from = QLabel("De:")
+        lbl_from = QLabel("From:")
         lbl_from.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px;")
         self.src_lang_combo = QComboBox()
-        self.src_lang_combo.addItems(["English", "Korean (한국어)", "Japanese (日本語)", "Chinese (中文)", "Spanish"])
+        self.src_lang_combo.addItems(get_source_display_names())
         self.src_lang_combo.currentIndexChanged.connect(self._save_session_credentials)
 
-        lbl_to = QLabel("➔ A:")
+        lbl_to = QLabel("➔ To:")
         lbl_to.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px;")
         self.tgt_lang_combo = QComboBox()
-        self.tgt_lang_combo.addItems(["Spanish (Neutro)", "English", "Portuguese", "French"])
+        self.tgt_lang_combo.addItems(get_target_display_names())
         self.tgt_lang_combo.currentIndexChanged.connect(self._save_session_credentials)
 
         row_lang.addWidget(lbl_from)
@@ -678,7 +681,7 @@ class TranslatorPanel(QWidget):
         row_model.addWidget(self.model_combo, 1)
         lay.addLayout(row_model)
 
-        self.lbl_token_counter = QLabel("⚡ Tokens est.: ~1,450 (Texto: ~330 | Img: ~1,120)")
+        self.lbl_token_counter = QLabel("⚡ Est. Tokens: ~1,450 (Text: ~330 | Img: ~1,120)")
         self.lbl_token_counter.setStyleSheet("color: #00d4ff; font-size: 9px; font-weight: bold;")
         lay.addWidget(self.lbl_token_counter)
 
@@ -694,7 +697,7 @@ class TranslatorPanel(QWidget):
         self.lbl_api_status.setVisible(False)
         lay.addWidget(self.lbl_api_status)
 
-        # --- SECCIÓN 2: GLOBOS Y VARIANTES ---
+        # --- SECTION 2: BUBBLES & VARIANTS ---
         row_ent_head = QHBoxLayout()
         self.lbl_bubbles = QLabel("2. DETECTED TEXT ENTITIES & VARIANTS")
         self.lbl_bubbles.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 9px; font-weight: bold;")
@@ -718,12 +721,12 @@ class TranslatorPanel(QWidget):
         self.scroll.setWidget(self.bubble_container)
         lay.addWidget(self.scroll, 1)
 
-        # --- SECCIÓN 3: ARCHIVO DE GUION (.TXT) CON SELECTOR EN 2 NIVELES ---
+        # --- SECTION 3: SCRIPT FILE (.TXT) WITH TWO-TIER HIERARCHY ---
         lbl_script = QLabel("3. SCRIPT FILE (.TXT)")
         lbl_script.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 9px; font-weight: bold; margin-top: 4px;")
         lay.addWidget(lbl_script)
 
-        # NIVEL 1: SERIE / CARPETA DENTRO DE translations/
+        # TIER 1: SERIES SELECTION
         row_series = QHBoxLayout()
         lbl_series = QLabel("Series:")
         lbl_series.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px; min-width: 42px;")
@@ -750,7 +753,7 @@ class TranslatorPanel(QWidget):
         row_series.addWidget(self.btn_open_folder)
         lay.addLayout(row_series)
 
-        # NIVEL 2: GUIONES DE LA SERIE SELECCIONADA
+        # TIER 2: SCRIPT SELECTION
         row_script_sel = QHBoxLayout()
         lbl_pick = QLabel("Script:")
         lbl_pick.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px; min-width: 42px;")
@@ -838,20 +841,41 @@ class TranslatorPanel(QWidget):
         self._save_session_credentials()
 
     def set_locked(self, locked: bool):
-        self.btn_translate_page.setEnabled(not locked)
-        self.scroll.setEnabled(not locked)
-        self.btn_add_bubble.setEnabled(not locked)
+        """
+        Locks or unlocks all configuration controls, settings, and editor panels 
+        to ensure data consistency during active inference or batch jobs.
+        """
+        # Section 1: Engine, Models, Rules & Languages
         self.provider_combo.setEnabled(not locked)
         self.mode_combo.setEnabled(not locked)
+        self.btn_rules.setEnabled(not locked)
         self.src_lang_combo.setEnabled(not locked)
         self.tgt_lang_combo.setEnabled(not locked)
+        self.chk_lan_mode.setEnabled(not locked)
+        self.primary_input.setEnabled(not locked)
+        self.btn_connect.setEnabled(not locked)
+        self.secondary_input.setEnabled(not locked)
+        self.model_combo.setEnabled(not locked)
+        self.btn_translate_page.setEnabled(not locked)
+
+        # Section 2: Dialogue editor & variants
+        self.scroll.setEnabled(not locked)
+        self.btn_add_bubble.setEnabled(not locked)
+
+        # Section 3: Script file hierarchy
+        self.combo_series_folder.setEnabled(not locked)
+        self.btn_new_series_folder.setEnabled(not locked)
+        self.btn_open_folder.setEnabled(not locked)
+        self.combo_folder_scripts.setEnabled(not locked)
+        self.btn_new_txt.setEnabled(not locked)
+        self.btn_load_txt.setEnabled(not locked)
 
         if locked:
-            self.lbl_api_status.setText("🔒 LOCKED: Reading image & generating translation...")
+            self.lbl_api_status.setText("🔒 LOCKED: Inference engine busy...")
             self.lbl_api_status.setStyleSheet("color: #00d2ff; font-size: 10px; font-weight: bold; padding: 2px;")
             self.lbl_api_status.setVisible(True)
             if self.mw.current_img_path:
-                self.mw.file_list.update_item_state(self.mw.current_img_path, "lock")
+                self.mw.file_list.update_item_state(self.mw.current_img_path, "lock", "Translating in progress...")
 
     def on_test_connection_and_fetch_models(self):
         provider = self.provider_combo.currentText()
@@ -922,7 +946,7 @@ class TranslatorPanel(QWidget):
     def _get_all_project_paths(self) -> list:
         return [self.mw.file_list.item(i).data(Qt.UserRole) for i in range(self.mw.file_list.count())]
 
-    # --- SELECTOR DE GUIONES DE 2 NIVELES ---
+    # --- TWO-TIER SCRIPT HIERARCHY ---
     def refresh_series_folders(self):
         """Populates the series combo with translations/ and its series subdirectories."""
         current_data = self.combo_series_folder.currentData()
@@ -950,7 +974,6 @@ class TranslatorPanel(QWidget):
         self.refresh_scripts_for_selected_series()
 
     def get_selected_series_dir(self) -> str:
-        """Returns the absolute directory path of the active series."""
         data = self.combo_series_folder.currentData()
         if data and os.path.exists(data):
             return data
@@ -1104,13 +1127,59 @@ class TranslatorPanel(QWidget):
         self.active_worker.error.connect(self._on_translation_failed)
         self.active_worker.start()
 
-    def _on_translation_success(self, path: str, bubbles: list, usage: dict):
+    def _on_translation_success(self, path: str, result: TranslationResult):
         self.set_locked(False)
 
+        status = result.status
+        fname = os.path.basename(path)
+
+        if status == ProviderStatus.SAFETY_BLOCKED:
+            self.lbl_api_status.setText("🛡 Blocked by Content Moderation")
+            self.lbl_api_status.setStyleSheet("color: #ff3344; font-size: 10px; font-weight: bold; padding: 2px;")
+            self.lbl_api_status.setVisible(True)
+            self.mw.file_list.update_item_state(path, "safety", result.message)
+            QMessageBox.warning(
+                self,
+                "Content Blocked by LLM Provider",
+                f"Page: {fname}\n\n"
+                f"{result.message}\n\n"
+                "Recommendation:\n"
+                "To process sensitive, mature, or high-action scenes, switch to an alternative LLM provider (such as an uncensored local model via Ollama, or an alternative endpoint)."
+            )
+            return
+
+        if status == ProviderStatus.SERVER_BUSY:
+            self.lbl_api_status.setText("⏳ Provider Busy / Overloaded")
+            self.lbl_api_status.setStyleSheet("color: #ffd600; font-size: 10px; font-weight: bold; padding: 2px;")
+            self.lbl_api_status.setVisible(True)
+            self.mw.file_list.update_item_state(path, "busy", result.message)
+            QMessageBox.warning(self, "Server Busy", f"{result.message}\n\nPlease retry in a couple of minutes.")
+            return
+
+        if status == ProviderStatus.EMPTY:
+            self.lbl_api_status.setText("💬 Silent Page (No text detected)")
+            self.lbl_api_status.setStyleSheet("color: #8faecf; font-size: 10px; font-weight: bold; padding: 2px;")
+            self.lbl_api_status.setVisible(True)
+            self.page_bubbles_data[path] = []
+            self.path_dialogues_map.pop(path, None)
+            self.mw.file_list.update_item_state(path, "empty", result.message or "Silent panel (No text detected)")
+            self.populate_bubble_editor([])
+            return
+
+        if status == ProviderStatus.ERROR:
+            self.lbl_api_status.setText("✖ Translation error")
+            self.lbl_api_status.setStyleSheet("color: #ff5252; font-size: 10px; font-weight: bold; padding: 2px;")
+            self.lbl_api_status.setVisible(True)
+            self.mw.file_list.update_item_state(path, "error", result.message or "Translation failed")
+            QMessageBox.critical(self, "Translation Error", f"Failed to translate {fname}:\n{result.message}")
+            return
+
+        # SUCCESS
         self.lbl_api_status.setText("✔ Translation generated successfully")
         self.lbl_api_status.setStyleSheet("color: #00e676; font-size: 10px; font-weight: bold; padding: 2px;")
         self.lbl_api_status.setVisible(True)
 
+        usage = result.usage
         p_tok = usage.get("prompt_tokens", 0)
         c_tok = usage.get("output_tokens", 0)
         t_tok = usage.get("total_tokens", p_tok + c_tok)
@@ -1119,18 +1188,19 @@ class TranslatorPanel(QWidget):
                 f"⚡ Input: {p_tok:,} | Output: {c_tok:,} | Total: {t_tok:,} tokens"
             )
 
-        self.page_bubbles_data[path] = bubbles
-        self.mw.file_list.update_item_state(path, "ready")
+        self.page_bubbles_data[path] = result.bubbles
+        self.path_dialogues_map[path] = [b.get("direct") for b in result.bubbles if b.get("direct")]
+        self.mw.file_list.update_item_state(path, "ready", f"Translated ({len(result.bubbles)} dialogues)")
 
         if path == self.mw.current_img_path:
-            self.populate_bubble_editor(bubbles)
+            self.populate_bubble_editor(result.bubbles)
 
     def _on_translation_failed(self, path: str, error_msg: str):
         self.set_locked(False)
-        self.lbl_api_status.setText("✖ Translation error")
+        self.lbl_api_status.setText("✖ Translation failed")
         self.lbl_api_status.setStyleSheet("color: #ff5252; font-size: 10px; font-weight: bold; padding: 2px;")
         self.lbl_api_status.setVisible(True)
-        self.mw.file_list.update_item_state(path, "error")
+        self.mw.file_list.update_item_state(path, "error", error_msg[:60])
         QMessageBox.critical(self, "Translation Error", f"Failed to translate {os.path.basename(path)}:\n{error_msg}")
 
     def on_manually_add_bubble(self):
@@ -1290,19 +1360,17 @@ class TranslatorPanel(QWidget):
         self.bubble_lay.addWidget(spacer, 1)
         self._bottom_spacer = spacer
 
-    # --- CREACIÓN INTELIGENTE DE PLANTILLAS ---
+    # --- SCRIPT TEMPLATE CREATION ---
     def on_generate_template(self):
         paths = self._get_all_project_paths()
         if not paths:
             QMessageBox.warning(self, "No Images Loaded", "Please import an image folder before creating a script.")
             return
 
-        # Infer default series name from series folder or image folder
         active_series = self.combo_series_folder.currentText().replace("📂 ", "").replace("📁 [Root] translations/", "").strip()
         if not active_series or active_series == "translations":
             active_series = os.path.basename(os.path.dirname(paths[0])) if paths else ""
 
-        # Infer chapter number from image folder name (e.g. Chapter_4 -> 4)
         chap_match = re.search(r"(\d+)", os.path.basename(os.path.dirname(paths[0])) if paths else "")
         default_chap = chap_match.group(1) if chap_match else "1"
 
@@ -1333,7 +1401,6 @@ class TranslatorPanel(QWidget):
             self.loaded_script_path = save_path
             self.lbl_script_status.setText(f"Script: {filename}")
             
-            # Refresh script list and select newly created file
             self.refresh_scripts_for_selected_series()
             idx = self.combo_folder_scripts.findData(save_path)
             if idx >= 0:
@@ -1393,7 +1460,7 @@ class TranslatorPanel(QWidget):
 
             for p in resolved:
                 self.page_bubbles_data.pop(p, None)
-                self.mw.file_list.update_item_state(p, "modified")
+                self.mw.file_list.update_item_state(p, "modified", "Imported from script")
 
             self.lbl_script_status.setText(f"Loaded: {os.path.basename(open_path)}")
             if self.mw.current_img_path:

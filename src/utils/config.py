@@ -4,7 +4,7 @@
 
 class Config:
     APP_NAME = "Manga Translate Studio"
-    VERSION = "1.2.0"
+    VERSION = "1.5.0 BETA"
 
     # Deep Obsidian Theme
     COLOR_BG = "#0b0b0e"
