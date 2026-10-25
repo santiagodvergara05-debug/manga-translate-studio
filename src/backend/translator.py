@@ -1,6 +1,12 @@
+"""
+Translation workspace panel, dialogue card manager, and script file synchronization engine.
+
+Coordinates UI inputs, multimodal inference triggers, and bidirectional synchronization 
+between active editor fields and structured Manga Cleaner translation scripts (.txt).
+"""
+
 import os
 import re
-import json
 import subprocess
 import unicodedata
 
@@ -11,18 +17,17 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QComboBox, QLineEdit, QScrollArea, 
     QFrame, QDialog, QTextEdit, QTabWidget, QCheckBox, QInputDialog
 )
-from PySide6.QtCore import Qt
 
 from src.utils.config import Config
 from src.utils.paths import Paths
 from src.utils.logger import logger
+from src.backend.prompt_manager import PromptManager
+from src.backend.credential_manager import CredentialManager
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.backend.ai_client import FetchModelsWorker, MultimodalTranslationWorker, AIClientManager
 from src.backend.languages import (
     get_source_display_names, 
-    get_target_display_names, 
-    is_asian_source, 
-    get_sfx_rule_for_target
+    get_target_display_names
 )
 
 
@@ -31,39 +36,13 @@ def _nfc(s: str) -> str:
     return unicodedata.normalize("NFC", s) if s else ""
 
 
-READING_ORDER = {
-    "Manhwa": "Vertical webtoon scroll: top-to-bottom, left-to-right within the same row.",
-    "Manga": "Japanese format: right-to-left, top-to-bottom.",
-    "Comic": "Western format: left-to-right, top-to-bottom.",
-    "Manhua": "Vertical scroll: top-to-bottom, left-to-right within the same row.",
-}
-
-DEFAULT_CORE_RULES = r"""# CORE EXTRACTION ENGINE
-Extract every text entity on the attached page, following the reading order given in ACTIVE MEDIUM:
-speech bubbles, narration boxes/captions, sound effects (SFX) and floating outside text.
-
-RULES
-1. One element per visual unit. Never merge separate bubbles or panels. Never skip short or incomplete fragments (a single word, or a sentence cut off at a page edge such as "HOW LONG HAS IT"), including text at the very top or bottom.
-2. Transcribe the exact text into "original" so the editor can verify it. Translate strictly from the source language to the target language.
-3. Sentences often continue across bubbles and pages. If a PREVIOUS PAGE CONTEXT block is present, use it only for continuity; it is not part of this page, never return it.
-4. IGNORE and do not return: watermarks, scanlator or studio credits, logos, URLs, page numbers and isolated symbols (#, *, ♪).
-5. Variants (formal, aggressive, natural): fill one only if it differs meaningfully from "direct"; otherwise use "". Never fill them for SFX.
-6. "subtext": one short sentence only when the tone is not obvious; otherwise "". Never name a character in subtext unless an explicit name label is visible on the page.
-7. If the page has no translatable text, return {"bubbles": []}.
-8. Follow the USER RULES below for tone, pronouns, glossary and lore.
-9. Write every translation as a single clean line. Never insert line breaks (\n), even if the original text is split across several lines inside the bubble.
-10. Continuity punctuation: if a sentence is split across bubbles or page boundaries, the opening fragment must open with ¿ or ¡ (if applicable) and not end with a period; the continuing fragment must begin in lowercase and close with ? or !.
-"""
-
-DEFAULT_USER_RULES = ""
-
-
 # /////////////////////////////////#
 #       CREATE SCRIPT DIALOG       #
 # /////////////////////////////////#
 
 class CreateScriptDialog(QDialog):
     """Modal dialog prompting for Series Title and Chapter to generate a compliant script file."""
+
     def __init__(self, default_series: str = "", default_chapter: str = "1", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Create New Translation Script")
@@ -116,6 +95,7 @@ class CreateScriptDialog(QDialog):
         self._update_preview()
 
     def _get_clean_filename(self) -> str:
+        """Sanitizes user input to create a safe filename across Windows and Linux."""
         raw_title = self.txt_title.text().strip() or "Untitled_Series"
         raw_chapter = self.txt_chapter.text().strip() or "1"
         clean_title = re.sub(r'[\\/*?:"<>|]', "", raw_title).strip()
@@ -123,10 +103,12 @@ class CreateScriptDialog(QDialog):
         return f"{clean_title} - Chapter {clean_chap}.txt"
 
     def _update_preview(self):
+        """Updates live generated filename preview label."""
         filename = self._get_clean_filename()
         self.lbl_preview.setText(f"Generated filename: {filename}")
 
     def _validate_and_accept(self):
+        """Validates that mandatory fields are populated prior to dialog completion."""
         if not self.txt_title.text().strip():
             QMessageBox.warning(self, "Validation Notice", "Please provide a series title.")
             self.txt_title.setFocus()
@@ -134,6 +116,7 @@ class CreateScriptDialog(QDialog):
         self.accept()
 
     def get_data(self) -> tuple[str, str, str]:
+        """Returns series title, chapter identifier, and cleaned target filename."""
         title = self.txt_title.text().strip()
         chapter = self.txt_chapter.text().strip()
         filename = self._get_clean_filename()
@@ -145,6 +128,8 @@ class CreateScriptDialog(QDialog):
 # /////////////////////////////////#
 
 class RulesDialog(QDialog):
+    """Configuration dialog for customizing engine constraints and user-defined glossary rules."""
+
     def __init__(self, user_rules: str, core_rules: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Rules & System Prompt Configuration")
@@ -202,12 +187,15 @@ class RulesDialog(QDialog):
         lay.addLayout(btn_row)
 
     def _restore_defaults(self):
+        """Restores text editors to default engine configurations."""
+        from src.backend.prompt_manager import DEFAULT_CORE_RULES, DEFAULT_USER_RULES
         if self.tabs.currentIndex() == 0:
             self.txt_user_rules.setPlainText(DEFAULT_USER_RULES)
         else:
             self.txt_core_rules.setPlainText(DEFAULT_CORE_RULES)
 
     def get_results(self) -> tuple[str, str]:
+        """Returns the modified user rules and core extraction rules."""
         return self.txt_user_rules.toPlainText().strip(), self.txt_core_rules.toPlainText().strip()
 
 
@@ -216,8 +204,11 @@ class RulesDialog(QDialog):
 # //////////////////////////////////////////////////////#
 
 class TranslationScriptEngine:
+    """Parses, creates, and synchronizes standard structured .txt script templates."""
+
     @staticmethod
     def generate_template(project_paths: list, series_title: str = "", chapter_num: str = "") -> str:
+        """Generates a structured skeleton script file for all project image paths."""
         header = (
             "# =====================================================================\n"
             "# MANGA CLEANER - TRANSLATION SCRIPT TEMPLATE\n"
@@ -243,6 +234,12 @@ class TranslationScriptEngine:
 
     @staticmethod
     def parse_script(raw_text: str) -> list:
+        """
+        Parses an imported translation script extracting page entries and dialogue lines.
+        
+        Returns:
+            list[dict]: List of entries with 'index', 'filename', and 'lines'.
+        """
         non_comment_lines = [
             line for line in raw_text.splitlines()
             if not line.strip().startswith("#")
@@ -296,6 +293,7 @@ class TranslationScriptEngine:
 
     @staticmethod
     def sync_full_script_file(script_path: str, project_paths: list, page_dialogues_map: dict):
+        """Writes or updates an existing .txt script file preserving external metadata."""
         existing_header = None
         existing_footer = None
 
@@ -309,7 +307,7 @@ class TranslationScriptEngine:
                     existing_header = tag_match.group(1)
                     existing_footer = tag_match.group(3)
             except Exception as e:
-                logger.error(f"Error reading existing script: {e}")
+                logger.error(f"[SCRIPT_ENGINE] Error reading existing script: {e}")
 
         if not existing_header:
             existing_header = (
@@ -340,6 +338,8 @@ class TranslationScriptEngine:
             body_blocks.append("\n".join(block))
 
         full_content = existing_header + "\n\n".join(body_blocks) + existing_footer
+        
+        os.makedirs(os.path.dirname(script_path), exist_ok=True)
         with open(script_path, "w", encoding="utf-8") as f:
             f.write(full_content)
 
@@ -349,6 +349,8 @@ class TranslationScriptEngine:
 # /////////////////////////////////#
 
 class TranslatorPanel(QWidget):
+    """Primary right-hand panel for AI inference orchestration, editing, and script persistence."""
+
     def __init__(self, main_window):
         super().__init__()
         self.mw = main_window
@@ -357,29 +359,11 @@ class TranslatorPanel(QWidget):
         self.current_bubbles_widgets = []
         self.active_worker = None
         self.fetch_worker = None
-
         self.page_bubbles_data = {}
 
-        self.user_rules_file = os.path.join(Paths.CACHE, "user_rules.txt")
-        self.core_rules_file = os.path.join(Paths.CACHE, "core_rules.txt")
-        self.api_config_file = os.path.join(Paths.CACHE, "api_config.json")
-
-        self.user_rules = self._load_file_or_default(self.user_rules_file, DEFAULT_USER_RULES)
-        self.core_rules = self._load_file_or_default(self.core_rules_file, DEFAULT_CORE_RULES)
-        
-        if '"original":' in self.core_rules or "Never skip short or incomplete fragments" not in self.core_rules:
-            self.core_rules = DEFAULT_CORE_RULES
-            self._save_file(self.core_rules_file, self.core_rules)
-
-        self.gemini_key = ""
-        self.gemini_model = "gemini-3.1-flash-lite"
-        self.gemini_models_list = ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"]
-
-        self.ollama_url = "https://ollama.com/v1"
-        self.ollama_token = ""
-        self.ollama_lan_mode = True
-        self.ollama_model = ""
-        self.ollama_models_list = []
+        # Core isolated managers
+        self.prompt_manager = PromptManager()
+        self.cred_manager = CredentialManager()
 
         self._loading_config = False
 
@@ -387,61 +371,20 @@ class TranslatorPanel(QWidget):
         self._load_session_credentials()
         self.refresh_series_folders()
 
-    def _load_file_or_default(self, file_path: str, default_text: str) -> str:
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
-            except Exception:
-                pass
-        return default_text
-
-    def _save_file(self, file_path: str, text: str):
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(text)
-        except Exception as e:
-            logger.error(f"Error saving {file_path}: {e}")
-
     def _load_session_credentials(self):
-        if not os.path.exists(self.api_config_file):
-            return
-
+        """Loads configuration from persistent storage and synchronizes widget states."""
         self._loading_config = True
         try:
-            with open(self.api_config_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
+            cfg = self.cred_manager.data
 
-            provider = data.get("provider", "Gemini")
-            mode = data.get("mode", "Manhwa")
-            src_lang = data.get("src_lang", "English")
-            tgt_lang = data.get("tgt_lang", "Spanish (Neutral)")
-
-            if "gemini" in data:
-                g_data = data["gemini"]
-                self.gemini_key = g_data.get("key", "")
-                self.gemini_model = g_data.get("model", "gemini-3.1-flash-lite")
-                self.gemini_models_list = g_data.get("models_list", ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"])
-            else:
-                self.gemini_key = data.get("gemini_key", "")
-                self.gemini_model = data.get("model", "gemini-3.1-flash-lite")
-                self.gemini_models_list = data.get("models_list", ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"])
-
-            if "ollama" in data:
-                o_data = data["ollama"]
-                self.ollama_url = o_data.get("url", "https://ollama.com/v1")
-                self.ollama_token = o_data.get("token", "")
-                self.ollama_lan_mode = bool(o_data.get("lan_mode", True))
-                self.ollama_model = o_data.get("model", "")
-                self.ollama_models_list = o_data.get("models_list", [])
-            else:
-                self.ollama_url = data.get("ollama_url", "https://ollama.com/v1")
-                self.ollama_token = data.get("ollama_token", "")
-                self.ollama_lan_mode = bool(data.get("ollama_lan_mode", True))
-                self.ollama_model = data.get("model", "")
-                self.ollama_models_list = data.get("models_list", [])
+            provider = cfg.get("provider", "Gemini")
+            mode = cfg.get("mode", "Manhwa")
+            src_lang = cfg.get("src_lang", "English")
+            tgt_lang = cfg.get("tgt_lang", "Spanish (Neutral)")
 
             p_idx = self.provider_combo.findText(provider)
+            if p_idx < 0:
+                p_idx = self.provider_combo.findData(provider.lower())
             if p_idx >= 0:
                 self.provider_combo.setCurrentIndex(p_idx)
 
@@ -459,132 +402,78 @@ class TranslatorPanel(QWidget):
                     self.tgt_lang_combo.setCurrentIndex(i)
                     break
 
-            self.chk_lan_mode.setChecked(self.ollama_lan_mode)
+            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
+            creds = self.cred_manager.get_provider_credentials(provider_id)
+            self.chk_lan_mode.setChecked(bool(creds.get("lan_mode", True)))
+
             self._update_fields_for_provider()
 
         except Exception as e:
-            logger.error(f"Error loading credentials: {e}")
+            logger.error(f"[TRANSLATOR] Error loading session credentials: {e}")
         finally:
             self._loading_config = False
 
     def _save_session_credentials(self):
+        """Serializes current UI credentials dynamically into the persistent credential manager."""
         if self._loading_config:
             return
 
         try:
-            curr_provider = self.provider_combo.currentText()
-            is_ollama = (curr_provider == "Ollama")
+            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
+            provider_engine = AIClientManager.get_provider(provider_id)
 
-            if is_ollama:
-                if not self.chk_lan_mode.isChecked():
-                    self.ollama_url = self.primary_input.text().strip() or "https://ollama.com/v1"
-                    self.ollama_token = self.secondary_input.text().strip()
-                else:
-                    self.ollama_url = "http://localhost:11434"
-                self.ollama_lan_mode = self.chk_lan_mode.isChecked()
-                self.ollama_model = self.model_combo.currentText()
-                self.ollama_models_list = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
+            models_list = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
+            selected_model = self.model_combo.currentText().strip()
+
+            provider_data = {
+                "model": selected_model,
+                "models_list": models_list
+            }
+
+            if getattr(provider_engine, "requires_endpoint", False):
+                is_lan = getattr(provider_engine, "has_lan_mode", False) and self.chk_lan_mode.isChecked()
+                default_ep = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
+                placeholder_ep = getattr(provider_engine, "primary_placeholder", "https://ollama.com/v1")
+
+                provider_data["lan_mode"] = is_lan
+                provider_data["url"] = default_ep if is_lan else (self.primary_input.text().strip() or placeholder_ep)
+                provider_data["token"] = "" if is_lan else self.secondary_input.text().strip()
             else:
-                self.gemini_key = self.primary_input.text().strip()
-                self.gemini_model = self.model_combo.currentText()
-                self.gemini_models_list = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
+                provider_data["key"] = self.primary_input.text().strip()
 
             payload = {
-                "provider": curr_provider,
+                "provider": self.provider_combo.currentText(),
                 "mode": self.mode_combo.currentText(),
                 "src_lang": self.src_lang_combo.currentText(),
                 "tgt_lang": self.tgt_lang_combo.currentText(),
-                "gemini": {
-                    "key": self.gemini_key,
-                    "model": self.gemini_model,
-                    "models_list": self.gemini_models_list
-                },
-                "ollama": {
-                    "lan_mode": self.ollama_lan_mode,
-                    "url": self.ollama_url,
-                    "token": self.ollama_token,
-                    "model": self.ollama_model,
-                    "models_list": self.ollama_models_list
-                }
+                provider_id: provider_data
             }
 
-            with open(self.api_config_file, "w", encoding="utf-8") as f:
-                json.dump(payload, f, indent=2)
-
+            self.cred_manager.save(payload)
             self.update_token_estimate()
         except Exception as e:
-            logger.error(f"Error saving session config: {e}")
+            logger.error(f"[TRANSLATOR] Error saving session config: {e}")
 
     def get_full_prompt(self) -> str:
-        src = self.src_lang_combo.currentText()
-        tgt = self.tgt_lang_combo.currentText()
-        medium = self.mode_combo.currentText()
-        asian_src = is_asian_source(src)
-
-        medium_block = (
-            f"[ACTIVE MEDIUM: {medium.upper()}]\n"
-            f"- Reading order: {READING_ORDER.get(medium, READING_ORDER['Manhwa'])}"
-        )
-        lang_block = (
-            "[LANGUAGE]\n"
-            f"- Source language: {src}\n"
-            f"- Target language: {tgt} (fluid, natural, high-quality scanlation)"
-        )
-
-        sfx_rule = get_sfx_rule_for_target(tgt, asian_src)
-        sfx_en_line = (',\n    "sfx_en": "English equivalent for SFX, otherwise empty string"'
-                       if asian_src else "")
-        schema_block = (
-            "OUTPUT: valid JSON only, no markdown, no comments, exactly this shape:\n"
-            '{"bubbles": [\n  {\n'
-            '    "id": 1,\n'
-            '    "type": "bubble",\n'
-            '    "original": "exact text on the page",\n'
-            '    "direct": "primary translation",\n'
-            '    "formal": "variant or empty string",\n'
-            '    "aggressive": "variant or empty string",\n'
-            '    "natural": "variant or empty string",\n'
-            '    "subtext": "short note or empty string"' + sfx_en_line + "\n"
-            "  }\n]}\n"
-            '"type" must be one of: bubble, narration, sfx, outside.'
-        )
-
-        prompt_parts = [self.core_rules, sfx_rule, medium_block, lang_block, schema_block]
-        if self.user_rules and self.user_rules.strip():
-            prompt_parts.append(f"# USER RULES\n{self.user_rules.strip()}")
-
-        return "\n\n".join(prompt_parts)
-
-    def _build_prev_context(self, target_path: str, n: int = 3) -> str:
-        paths = self._get_all_project_paths()
-        if target_path not in paths or paths.index(target_path) == 0:
-            return ""
-        prev = paths[paths.index(target_path) - 1]
-
-        pairs = []
-        for b in self.page_bubbles_data.get(prev) or []:
-            if b.get("type") == "sfx":
-                continue
-            orig = str(b.get("original", "")).replace("\n", " ").strip()
-            tr = (b.get("final") or b.get("direct") or "").replace("\n", " ").strip()
-            if orig and tr:
-                pairs.append((orig, tr))
-        pairs = pairs[-n:]
-        if not pairs:
-            return ""
-
-        lines = "\n".join(f'- "{o}" -> "{t}"' for o, t in pairs)
-        return (
-            "\n\n# PREVIOUS PAGE CONTEXT (continuity only; do NOT return these lines)\n"
-            f"{lines}\n"
-            "If the first bubble(s) of this page continue one of these fragments, translate them "
-            "so both parts read as one natural sentence, adapting to the translation above.\n"
+        """Constructs system prompt utilizing the isolated prompt manager."""
+        return self.prompt_manager.build_full_prompt(
+            src_lang=self.src_lang_combo.currentText(),
+            tgt_lang=self.tgt_lang_combo.currentText(),
+            medium=self.mode_combo.currentText()
         )
 
     def build_prompt_for(self, path: str) -> str:
-        return self.get_full_prompt() + self._build_prev_context(path)
+        """Builds full prompt including sequential context continuity across previous pages."""
+        base_prompt = self.get_full_prompt()
+        continuity = self.prompt_manager.build_continuity_context(
+            current_path=path,
+            all_project_paths=self._get_all_project_paths(),
+            page_bubbles_data=self.page_bubbles_data
+        )
+        return base_prompt + continuity
 
     def update_token_estimate(self):
+        """Calculates token overhead estimation based on prompt and active image viewport."""
         prompt = self.get_full_prompt()
         path = self.mw.current_img_path
         total, txt_tok, img_tok = AIClientManager.estimate_tokens(prompt, path)
@@ -605,14 +494,23 @@ class TranslatorPanel(QWidget):
 
         row_top = QHBoxLayout()
 
-        def _get_provider_icon(name: str):
+        def _get_provider_icon(name: str) -> QIcon:
             p = os.path.join(Paths.BUNDLE_DIR, "assets", "icon_provider", f"{name.lower()}.svg")
             return QIcon(p) if os.path.exists(p) else QIcon()
 
         self.provider_combo = QComboBox()
         self.provider_combo.setIconSize(QSize(18, 18))
-        self.provider_combo.addItem(_get_provider_icon("gemini"), "Gemini")
-        self.provider_combo.addItem(_get_provider_icon("ollama"), "Ollama")
+
+        if hasattr(AIClientManager, "get_available_providers"):
+            available_providers = AIClientManager.get_available_providers()
+        else:
+            from src.backend.ai_client import PROVIDERS
+            available_providers = list(PROVIDERS.items())
+
+        for p_id, p_instance in available_providers:
+            disp_name = getattr(p_instance, "display_name", p_id.capitalize())
+            self.provider_combo.addItem(_get_provider_icon(p_id), disp_name, userData=p_id)
+
         self.provider_combo.currentIndexChanged.connect(self._on_provider_change)
 
         self.mode_combo = QComboBox()
@@ -667,7 +565,7 @@ class TranslatorPanel(QWidget):
         lay.addLayout(row_primary)
 
         self.secondary_input = QLineEdit()
-        self.secondary_input.setPlaceholderText("Enter Ollama Cloud API Key...")
+        self.secondary_input.setPlaceholderText("Enter Cloud API Key...")
         self.secondary_input.setEchoMode(QLineEdit.Password)
         self.secondary_input.editingFinished.connect(self._save_session_credentials)
         lay.addWidget(self.secondary_input)
@@ -783,56 +681,68 @@ class TranslatorPanel(QWidget):
         self._update_fields_for_provider()
 
     def _update_fields_for_provider(self):
-        is_ollama = (self.provider_combo.currentText() == "Ollama")
-        self.chk_lan_mode.setVisible(is_ollama)
+        """
+        Dynamically adapts UI fields based on provider schema requirements
+        without hardcoded if/else statements for specific engines.
+        """
+        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
+        provider = AIClientManager.get_provider(provider_id)
+        creds = self.cred_manager.get_provider_credentials(provider_id)
 
         self.primary_input.blockSignals(True)
         self.secondary_input.blockSignals(True)
         self.model_combo.blockSignals(True)
 
-        if is_ollama:
-            is_lan = self.chk_lan_mode.isChecked()
-            if is_lan:
-                self.primary_input.setText("http://localhost:11434")
-                self.primary_input.setEnabled(False)
-                self.primary_input.setPlaceholderText("Localhost (127.0.0.1:11434)")
-                self.primary_input.setEchoMode(QLineEdit.Normal)
-                self.secondary_input.setVisible(False)
-                self.secondary_input.setEnabled(False)
-            else:
-                self.primary_input.setEnabled(True)
-                self.primary_input.setPlaceholderText("https://ollama.com/v1")
-                self.primary_input.setEchoMode(QLineEdit.Normal)
-                self.primary_input.setText(self.ollama_url or "https://ollama.com/v1")
-                self.secondary_input.setVisible(True)
-                self.secondary_input.setEnabled(True)
-                self.secondary_input.setText(self.ollama_token)
+        # 1. LAN / Local Mode visibility
+        has_lan = getattr(provider, "has_lan_mode", False)
+        self.chk_lan_mode.setVisible(has_lan)
+        is_lan = has_lan and self.chk_lan_mode.isChecked()
 
-            self.model_combo.clear()
-            if self.ollama_models_list:
-                self.model_combo.addItems(self.ollama_models_list)
-            if self.ollama_model and self.model_combo.findText(self.ollama_model) >= 0:
-                self.model_combo.setCurrentText(self.ollama_model)
-        else:
-            self.primary_input.setEnabled(True)
-            self.primary_input.setPlaceholderText("Enter Gemini API Key...")
-            self.primary_input.setEchoMode(QLineEdit.Password)
-            self.primary_input.setText(self.gemini_key)
+        requires_endpoint = getattr(provider, "requires_endpoint", False)
+        is_secret = getattr(provider, "is_primary_secret", True)
+        primary_placeholder = getattr(provider, "primary_placeholder", "Enter API Key...")
+        secondary_placeholder = getattr(provider, "secondary_placeholder", "Enter Cloud Token...")
+        default_endpoint = getattr(provider, "default_endpoint", "http://localhost:11434")
+
+        # 2. Dynamic Input Fields Configuration
+        if is_lan:
+            self.primary_input.setText(default_endpoint)
+            self.primary_input.setEnabled(False)
+            self.primary_input.setPlaceholderText("Localhost Endpoint")
+            self.primary_input.setEchoMode(QLineEdit.Normal)
             self.secondary_input.setVisible(False)
             self.secondary_input.setEnabled(False)
+        else:
+            self.primary_input.setEnabled(True)
+            self.primary_input.setPlaceholderText(primary_placeholder)
+            self.primary_input.setEchoMode(QLineEdit.Password if is_secret else QLineEdit.Normal)
 
-            self.model_combo.clear()
-            if self.gemini_models_list:
-                self.model_combo.addItems(self.gemini_models_list)
-            if self.gemini_model and self.model_combo.findText(self.gemini_model) >= 0:
-                self.model_combo.setCurrentText(self.gemini_model)
+            if requires_endpoint:
+                self.primary_input.setText(creds.get("url", primary_placeholder))
+                self.secondary_input.setVisible(True)
+                self.secondary_input.setEnabled(True)
+                self.secondary_input.setPlaceholderText(secondary_placeholder)
+                self.secondary_input.setText(creds.get("token", ""))
+            else:
+                self.primary_input.setText(creds.get("key", ""))
+                self.secondary_input.setVisible(False)
+                self.secondary_input.setEnabled(False)
+
+        # 3. Dynamic Models List
+        self.model_combo.clear()
+        default_models = getattr(provider, "default_models", [])
+        models_list = creds.get("models_list", default_models)
+        if models_list:
+            self.model_combo.addItems(models_list)
+        selected_model = creds.get("model", "")
+        if selected_model and self.model_combo.findText(selected_model) >= 0:
+            self.model_combo.setCurrentText(selected_model)
 
         self.primary_input.blockSignals(False)
         self.secondary_input.blockSignals(False)
         self.model_combo.blockSignals(False)
 
     def _on_lan_mode_toggled(self, checked: bool):
-        self.ollama_lan_mode = checked
         self._update_fields_for_provider()
         self._save_session_credentials()
 
@@ -878,39 +788,44 @@ class TranslatorPanel(QWidget):
                 self.mw.file_list.update_item_state(self.mw.current_img_path, "lock", "Translating in progress...")
 
     def on_test_connection_and_fetch_models(self):
-        provider = self.provider_combo.currentText()
-        is_ollama = (provider == "Ollama")
+        """Triggers asynchronous connection validation and model retrieval."""
+        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
+        provider_engine = AIClientManager.get_provider(provider_id)
 
-        if is_ollama:
-            if self.chk_lan_mode.isChecked():
-                key_or_url = "http://localhost:11434"
+        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
+        has_lan = getattr(provider_engine, "has_lan_mode", False)
+
+        if requires_endpoint:
+            if has_lan and self.chk_lan_mode.isChecked():
+                key_or_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
                 auth_token = ""
             else:
-                key_or_url = self.primary_input.text().strip() or "https://ollama.com/v1"
+                key_or_url = self.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
                 auth_token = self.secondary_input.text().strip()
-                if not auth_token:
-                    QMessageBox.warning(self, "API Key Required", "Please enter your Ollama Cloud API Key.")
+                if not auth_token and not has_lan:
+                    QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} credentials.")
                     return
         else:
             key_or_url = self.primary_input.text().strip()
             auth_token = ""
             if not key_or_url:
-                QMessageBox.warning(self, "API Key Required", "Please enter your Gemini API Key.")
+                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} API Key.")
                 return
 
         self.btn_connect.setEnabled(False)
         self.btn_connect.setText("⏳ Checking...")
 
-        self.fetch_worker = FetchModelsWorker(provider, key_or_url, auth_token)
+        self.fetch_worker = FetchModelsWorker(provider_id, key_or_url, auth_token)
         self.fetch_worker.finished.connect(self._on_fetch_models_result)
         self.fetch_worker.start()
 
     def _on_fetch_models_result(self, success: bool, models: list, message: str):
+        """Handles background model fetch worker response."""
         self.btn_connect.setEnabled(True)
         self.btn_connect.setText("🔄 Connect")
 
         if success:
-            provider = self.provider_combo.currentText()
+            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
             current_choice = self.model_combo.currentText()
 
             self.model_combo.blockSignals(True)
@@ -920,12 +835,10 @@ class TranslatorPanel(QWidget):
                 self.model_combo.setCurrentText(current_choice)
             self.model_combo.blockSignals(False)
 
-            if provider == "Gemini":
-                self.gemini_models_list = list(models)
-                self.gemini_model = self.model_combo.currentText()
-            else:
-                self.ollama_models_list = list(models)
-                self.ollama_model = self.model_combo.currentText()
+            self.cred_manager.update_provider_credentials(provider_id, {
+                "model": self.model_combo.currentText(),
+                "models_list": list(models)
+            })
 
             self._save_session_credentials()
             QMessageBox.information(self, "Connection Successful", f"{message}\n\nModels ready: {len(models)}")
@@ -933,17 +846,17 @@ class TranslatorPanel(QWidget):
             QMessageBox.critical(self, "Connection Error", message)
 
     def on_open_rules_dialog(self):
-        dialog = RulesDialog(self.user_rules, self.core_rules, self)
+        """Displays modal dialog for configuring core engine rules and custom lore."""
+        dialog = RulesDialog(self.prompt_manager.user_rules, self.prompt_manager.core_rules, self)
         if dialog.exec() == QDialog.Accepted:
             new_user, new_core = dialog.get_results()
-            self.user_rules = new_user
-            self.core_rules = new_core
-            self._save_file(self.user_rules_file, new_user)
-            self._save_file(self.core_rules_file, new_core)
+            self.prompt_manager.save_user_rules(new_user)
+            self.prompt_manager.save_core_rules(new_core)
             self.update_token_estimate()
             QMessageBox.information(self, "Rules Saved", "User rules and engine technical guidelines were saved to disk.")
 
     def _get_all_project_paths(self) -> list:
+        """Retrieves absolute file paths for all images loaded in the project asset list."""
         return [self.mw.file_list.item(i).data(Qt.UserRole) for i in range(self.mw.file_list.count())]
 
     # --- TWO-TIER SCRIPT HIERARCHY ---
@@ -974,6 +887,7 @@ class TranslatorPanel(QWidget):
         self.refresh_scripts_for_selected_series()
 
     def get_selected_series_dir(self) -> str:
+        """Returns the active series directory on disk."""
         data = self.combo_series_folder.currentData()
         if data and os.path.exists(data):
             return data
@@ -983,7 +897,7 @@ class TranslatorPanel(QWidget):
         self.refresh_scripts_for_selected_series()
 
     def refresh_scripts_for_selected_series(self):
-        """Populates .txt files strictly belonging to the active series. Never loads automatically."""
+        """Populates .txt files strictly belonging to the active series without automatic loading."""
         target_dir = self.get_selected_series_dir()
 
         self.combo_folder_scripts.blockSignals(True)
@@ -1004,7 +918,7 @@ class TranslatorPanel(QWidget):
         self.combo_folder_scripts.blockSignals(False)
 
     def on_create_new_series_folder(self):
-        """Allows creating a new series subfolder directly inside translations/."""
+        """Prompts user to create a new series subdirectory inside translations/."""
         folder_name, ok = QInputDialog.getText(
             self, "New Series Folder", "Enter series / comic title name:"
         )
@@ -1018,7 +932,7 @@ class TranslatorPanel(QWidget):
                 self.combo_series_folder.setCurrentIndex(idx)
 
     def on_folder_script_selected(self, index: int):
-        """Loads script only when user deliberately clicks an item."""
+        """Loads script only when user deliberately activates a combo item."""
         if index <= 0:
             return
         selected_path = self.combo_folder_scripts.itemData(index)
@@ -1026,7 +940,7 @@ class TranslatorPanel(QWidget):
             self.import_script_from_path(selected_path)
 
     def on_open_translations_folder(self):
-        """Opens active series directory in Windows File Explorer."""
+        """Opens active series directory in the default operating system file manager."""
         folder = self.get_selected_series_dir()
         os.makedirs(folder, exist_ok=True)
         if os.name == "nt":
@@ -1035,6 +949,7 @@ class TranslatorPanel(QWidget):
             subprocess.Popen(["xdg-open", folder])
 
     def load_page_state(self, path: str):
+        """Populates the dialogue cards for the page currently loaded in the main viewer."""
         self.update_token_estimate()
         if path in self.page_bubbles_data:
             self.populate_bubble_editor(self.page_bubbles_data[path])
@@ -1046,6 +961,7 @@ class TranslatorPanel(QWidget):
             self.populate_bubble_editor([])
 
     def save_current_page_editor(self):
+        """Saves values from the active bubble editor cards into in-memory maps."""
         path = self.mw.current_img_path
         if not path:
             return
@@ -1081,53 +997,55 @@ class TranslatorPanel(QWidget):
                 self.page_bubbles_data[path] = []
 
     def translate_current_page(self):
+        """Dispatches an asynchronous single-page multimodal translation request."""
         if not self.mw.current_img_path or not os.path.exists(self.mw.current_img_path):
             QMessageBox.warning(self, "Notice", "Select a page in the left assets list first.")
             return
 
-        provider = self.provider_combo.currentText().lower()
-        selected_model = self.model_combo.currentText().strip()
-        is_ollama = (provider == "ollama")
+        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
+        provider_engine = AIClientManager.get_provider(provider_id)
+        default_models = getattr(provider_engine, "default_models", [])
+        selected_model = self.model_combo.currentText().strip() or (default_models[0] if default_models else "")
 
-        if is_ollama:
-            if self.chk_lan_mode.isChecked():
-                ollama_url = "http://localhost:11434"
-                ollama_token = ""
+        api_key = ""
+        endpoint_url = ""
+        token = ""
+
+        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
+        has_lan = getattr(provider_engine, "has_lan_mode", False)
+
+        if requires_endpoint:
+            if has_lan and self.chk_lan_mode.isChecked():
+                endpoint_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
             else:
-                ollama_url = self.primary_input.text().strip() or "https://ollama.com/v1"
-                ollama_token = self.secondary_input.text().strip()
-                if not ollama_token:
-                    QMessageBox.warning(self, "API Key Required", "Please enter your Ollama Cloud API Key.")
+                endpoint_url = self.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
+                token = self.secondary_input.text().strip()
+                if not token and not has_lan:
+                    QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} credentials.")
                     return
-            gemini_key = ""
-            if not selected_model:
-                selected_model = "gemma4:31b-cloud"
         else:
-            gemini_key = self.primary_input.text().strip()
-            ollama_url = ""
-            ollama_token = ""
-            if not gemini_key:
-                QMessageBox.warning(self, "API Key Required", "Please enter your Gemini API Key.")
+            api_key = self.primary_input.text().strip()
+            if not api_key:
+                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} API Key.")
                 return
-            if not selected_model:
-                selected_model = "gemini-3.1-flash-lite"
 
         self.set_locked(True)
 
         self.active_worker = MultimodalTranslationWorker(
             image_path=self.mw.current_img_path,
             full_prompt=self.build_prompt_for(self.mw.current_img_path),
-            provider=provider,
+            provider=provider_id,
             model_name=selected_model,
-            api_key=gemini_key,
-            ollama_url=ollama_url,
-            ollama_token=ollama_token
+            api_key=api_key,
+            ollama_url=endpoint_url,
+            ollama_token=token
         )
         self.active_worker.finished.connect(self._on_translation_success)
         self.active_worker.error.connect(self._on_translation_failed)
         self.active_worker.start()
 
     def _on_translation_success(self, path: str, result: TranslationResult):
+        """Processes successful inference output, updates item status, and renders editor cards."""
         self.set_locked(False)
 
         status = result.status
@@ -1174,7 +1092,7 @@ class TranslatorPanel(QWidget):
             QMessageBox.critical(self, "Translation Error", f"Failed to translate {fname}:\n{result.message}")
             return
 
-        # SUCCESS
+        # Inference successful
         self.lbl_api_status.setText("✔ Translation generated successfully")
         self.lbl_api_status.setStyleSheet("color: #00e676; font-size: 10px; font-weight: bold; padding: 2px;")
         self.lbl_api_status.setVisible(True)
@@ -1196,6 +1114,7 @@ class TranslatorPanel(QWidget):
             self.populate_bubble_editor(result.bubbles)
 
     def _on_translation_failed(self, path: str, error_msg: str):
+        """Handles unhandled worker thread exceptions."""
         self.set_locked(False)
         self.lbl_api_status.setText("✖ Translation failed")
         self.lbl_api_status.setStyleSheet("color: #ff5252; font-size: 10px; font-weight: bold; padding: 2px;")
@@ -1204,6 +1123,7 @@ class TranslatorPanel(QWidget):
         QMessageBox.critical(self, "Translation Error", f"Failed to translate {os.path.basename(path)}:\n{error_msg}")
 
     def on_manually_add_bubble(self):
+        """Manually appends an empty dialogue entity card to the editor."""
         if not self.mw.current_img_path:
             QMessageBox.warning(self, "Notice", "Select a page first.")
             return
@@ -1220,12 +1140,14 @@ class TranslatorPanel(QWidget):
         self.save_current_page_editor()
 
     def _remove_bubble_card(self, card_widget):
+        """Removes a dialogue card widget and refreshes cached dialogue lines."""
         if card_widget in self.current_bubbles_widgets:
             self.current_bubbles_widgets.remove(card_widget)
             card_widget.deleteLater()
             self.save_current_page_editor()
 
     def _create_bubble_card(self, b: dict):
+        """Builds an interactive dialogue card with variant selectors and editable text fields."""
         card = QFrame()
         card.setSizePolicy(card.sizePolicy().horizontalPolicy(), card.sizePolicy().Policy.Maximum)
         card.setStyleSheet("background: #1b1b22; border: 1px solid #2a2a35; border-radius: 4px; padding: 5px;")
@@ -1335,6 +1257,7 @@ class TranslatorPanel(QWidget):
         card.line_edit = line_edit
 
     def populate_bubble_editor(self, bubbles: list):
+        """Reconstructs the card layout for the specified bubble list."""
         while self.bubble_lay.count():
             item = self.bubble_lay.takeAt(0)
             w = item.widget()
@@ -1362,6 +1285,7 @@ class TranslatorPanel(QWidget):
 
     # --- SCRIPT TEMPLATE CREATION ---
     def on_generate_template(self):
+        """Displays dialog to initialize a compliant script skeleton file."""
         paths = self._get_all_project_paths()
         if not paths:
             QMessageBox.warning(self, "No Images Loaded", "Please import an image folder before creating a script.")
@@ -1395,6 +1319,7 @@ class TranslatorPanel(QWidget):
             content = TranslationScriptEngine.generate_template(
                 paths, series_title=series_title, chapter_num=chapter_num
             )
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             with open(save_path, "w", encoding="utf-8") as f:
                 f.write(content)
 
@@ -1417,6 +1342,7 @@ class TranslatorPanel(QWidget):
             QMessageBox.critical(self, "Creation Error", str(e))
 
     def on_import_script(self):
+        """Opens file dialog for user to select an existing .txt script."""
         paths = self._get_all_project_paths()
         if not paths:
             QMessageBox.warning(self, "No Images", "Please import an image folder first.")
@@ -1432,6 +1358,7 @@ class TranslatorPanel(QWidget):
         self.import_script_from_path(open_path)
 
     def import_script_from_path(self, open_path: str):
+        """Loads and resolves dialogue lines from a script file into project pages."""
         paths = self._get_all_project_paths()
         if not paths:
             return

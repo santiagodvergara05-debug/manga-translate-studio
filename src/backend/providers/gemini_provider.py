@@ -38,10 +38,25 @@ UNSAFE_FINISH_REASONS = {
 
 
 class GeminiProvider(BaseAIProvider):
+    """Provider implementation for Google Gemini Vision REST API endpoints."""
+
+    display_name = "Gemini"
+    requires_endpoint = False
+    has_lan_mode = False
+    is_primary_secret = True
+    primary_placeholder = "Enter Gemini API Key..."
+    default_models = ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"]
+    
     def __init__(self):
         super().__init__("gemini")
 
     def test_and_fetch_models(self, key_or_url: str, auth_token: str = "") -> tuple[bool, list[str], str]:
+        """
+        Validates API key connectivity and fetches available vision-capable Gemini models.
+        
+        Returns:
+            tuple[bool, list[str], str]: (success_flag, list_of_model_names, status_message)
+        """
         key = key_or_url.strip()
         if not key:
             return False, [], "Please provide a valid Gemini API Key."
@@ -64,7 +79,7 @@ class GeminiProvider(BaseAIProvider):
                     supported.append(name)
 
             supported.sort(key=lambda x: (not ("flash" in x), x))
-            return True, supported or ["gemini-3.1-flash-lite", "gemini-1.5-flash"], "Connected successfully to Google Gemini."
+            return True, supported or list(self.default_models), "Connected successfully to Google Gemini."
         except Exception as e:
             return False, [], f"Connection error: {str(e)}"
 
@@ -77,6 +92,12 @@ class GeminiProvider(BaseAIProvider):
         endpoint_url: str = "",
         token: str = ""
     ) -> TranslationResult:
+        """
+        Executes a multimodal vision inference request against Google Gemini generateContent.
+        
+        Returns:
+            TranslationResult: Standardized container holding status, parsed dialogues, and telemetry.
+        """
         b64_img = self.encode_image(image_path)
         usage_info = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
         max_retries = 2
@@ -97,7 +118,7 @@ class GeminiProvider(BaseAIProvider):
             "generationConfig": {
                 "response_mime_type": "application/json",
                 "temperature": 0.2,
-                "maxOutputTokens": 4096
+                "maxOutputTokens": 8192
             }
         }
 
@@ -105,11 +126,13 @@ class GeminiProvider(BaseAIProvider):
             try:
                 res = requests.post(url, headers=headers, json=payload, timeout=90)
 
-                # Daily request limit exceeded (RPD)
+                # Handle HTTP 429 (Rate limits vs Daily quota exhaustion)
                 if res.status_code == 429:
-                    body_err = res.text
-                    if any(term in body_err for term in ("PerDay", "ResourceExhausted", "RESOURCE_EXHAUSTED")):
+                    body_err = res.text.lower()
+                    # Distinguish permanent daily request limits (RPD) from transient burst limits (RPM)
+                    if any(term in body_err for term in ("per day", "perday", "daily")):
                         raise DailyQuotaExceeded("Daily request limit exhausted for Gemini (RPD).")
+                    
                     if attempt < max_retries:
                         time.sleep(8 * (attempt + 1))
                         continue
@@ -120,7 +143,7 @@ class GeminiProvider(BaseAIProvider):
                         raw_error=res.text[:120]
                     )
 
-                # Transient server errors (503 / 500 / 502 / 504)
+                # Transient server errors (500 / 502 / 503 / 504)
                 if res.status_code in RETRYABLE_STATUS_CODES:
                     if attempt < max_retries:
                         time.sleep(5 * (attempt + 1))
@@ -150,7 +173,7 @@ class GeminiProvider(BaseAIProvider):
                 c_tok = meta.get("candidatesTokenCount", 0)
                 usage_info = {"prompt_tokens": p_tok, "output_tokens": c_tok, "total_tokens": p_tok + c_tok}
 
-                # 1. EVALUATION OF INPUT PROMPT FEEDBACK (BlockedReason Enum)
+                # 1. Evaluation of input prompt feedback (BlockedReason enum)
                 prompt_feedback = res_json.get("promptFeedback", {})
                 block_reason = prompt_feedback.get("blockReason")
                 if block_reason:
@@ -162,7 +185,7 @@ class GeminiProvider(BaseAIProvider):
                         raw_error=f"promptFeedback.blockReason={block_reason}"
                     )
 
-                # 2. CANDIDATES EXISTENCE VALIDATION
+                # 2. Candidates existence validation
                 candidates = res_json.get("candidates", [])
                 if not candidates:
                     return TranslationResult(
@@ -175,7 +198,7 @@ class GeminiProvider(BaseAIProvider):
                 cand = candidates[0]
                 finish_reason = cand.get("finishReason", "")
 
-                # 3. EVALUATION OF OUTPUT FINISH REASON (FinishReason Enum)
+                # 3. Evaluation of output finish reason (FinishReason enum)
                 if finish_reason in UNSAFE_FINISH_REASONS:
                     reason_desc = UNSAFE_FINISH_REASONS[finish_reason]
                     return TranslationResult(
@@ -193,8 +216,8 @@ class GeminiProvider(BaseAIProvider):
                         raw_error=f"finishReason={finish_reason}"
                     )
 
-                # Extract content parts, discarding thought blocks
-                parts = cand.get("content", {}).get("parts", [])
+                # Extract content parts, safely avoiding thought blocks and null contents
+                parts = (cand.get("content") or {}).get("parts", [])
                 text_parts = [p.get("text", "") for p in parts if "text" in p and not p.get("thought", False)]
                 raw_text = "".join(text_parts).strip()
 

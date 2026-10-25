@@ -54,6 +54,11 @@ class AIClientManager:
     """Orchestrates AI providers, token estimation, and request dispatching."""
 
     @staticmethod
+    def get_available_providers() -> list[tuple[str, BaseAIProvider]]:
+        """Returns list of registered (provider_id, provider_instance) tuples."""
+        return list(PROVIDERS.items())
+
+    @staticmethod
     def get_provider(provider_name: str) -> BaseAIProvider:
         key = provider_name.strip().lower()
         if key not in PROVIDERS:
@@ -137,7 +142,7 @@ class FetchModelsWorker(QThread):
 
 
 class MultimodalTranslationWorker(QThread):
-    finished = Signal(str, object)  # Emite (image_path, TranslationResult)
+    finished = Signal(str, object)  # Emits (image_path, TranslationResult)
     error = Signal(str, str)
 
     def __init__(

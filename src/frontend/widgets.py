@@ -1,3 +1,10 @@
+"""
+Reusable interface widgets, file navigation list, and dynamic SVG icon provider.
+
+Loads application icons directly from the assets/ directory with fallback handling,
+and provides telemetry and asset list management.
+"""
+
 import os
 from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QWidget, QHBoxLayout, 
@@ -5,94 +12,80 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
-from PySide6.QtCore import Qt, QSize, QByteArray
+from PySide6.QtCore import Qt, QSize
+from src.utils.paths import Paths
+from src.utils.logger import logger
 
-# ==============================================================================
-# SVGs EN MEMORIA (IDÉNTICOS AL REPOSITORIO DE MANGA CLEANER + NUEVOS ESTADOS)
-# ==============================================================================
-SVG_ICONS = {
-    "unmodified": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="18" fill="#32323e" stroke="#1f1f26" stroke-width="4"/>
-    </svg>""",
-
-    "waiting": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#ffd600" stroke="#1a1a20" stroke-width="6"/>
-        <path d="M50 22 V50 L68 62" fill="none" stroke="#ffffff" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>""",
-
-    "ready": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#00e676" stroke="#1a1a20" stroke-width="6"/>
-        <path d="M28 52 L44 68 L74 34" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>""",
-
-    "empty": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#202c38" stroke="#1a1a20" stroke-width="6"/>
-        <path d="M72 48 C72 35 62 25 50 25 C38 25 28 35 28 48 C28 54 31 59 36 63 L34 74 L46 68 C47.3 68.3 48.6 68.5 50 68.5 C62 68.5 72 58.5 72 48 Z" fill="#121820" stroke="#00d2ff" stroke-width="5" stroke-linejoin="round"/>
-        <line x1="40" y1="48" x2="60" y2="48" stroke="#8faecf" stroke-width="6" stroke-linecap="round" stroke-dasharray="2 8"/>
-    </svg>""",
-
-    "busy": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#ffd600" stroke="#1a1a20" stroke-width="6"/>
-        <path d="M50 22 V50 L68 62" fill="none" stroke="#1a1a20" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>""",
-
-    "safety": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#2a0d14" stroke="#ff1744" stroke-width="6"/>
-        <path d="M50 22 L30 30 V50 C30 63 38 74 50 78 C62 74 70 63 70 50 V30 Z" fill="#ff1744" stroke="#1a1a20" stroke-width="3"/>
-        <line x1="50" y1="36" x2="50" y2="54" stroke="#ffffff" stroke-width="7" stroke-linecap="round"/>
-        <circle cx="50" cy="65" r="4.5" fill="#ffffff"/>
-    </svg>""",
-
-    "modified": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#e000d0" stroke="#1a1a20" stroke-width="6"/>
-        <polygon points="50,26 74,50 50,74 26,50" fill="#ffffff"/>
-    </svg>""",
-
-    "error": """<svg viewBox="0 0 100 100">
-        <circle cx="50" cy="50" r="45" fill="#ff3d00" stroke="#1a1a20" stroke-width="6"/>
-        <path d="M32 32 L68 68 M68 32 L32 68" fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round"/>
-    </svg>""",
-
-    "lock": """<svg viewBox="0 0 100 100">
-        <rect x="20" y="40" width="60" height="48" rx="6" fill="#00d2ff" stroke="#1a1a20" stroke-width="4"/>
-        <path d="M32 40 V26 A18 18 0 0 1 68 26 V40" fill="none" stroke="#00d2ff" stroke-width="10" stroke-linecap="round"/>
-        <circle cx="50" cy="60" r="6" fill="#ffffff"/>
-        <path d="M50 60 V74" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
-    </svg>"""
+# Mapping between application state keys and actual filenames inside assets/
+ASSET_ICON_MAP = {
+    "unmodified": "icon_unassigned_1.svg",
+    "waiting": "icon_busy.svg",
+    "ready": "icon_ready.svg",
+    "empty": "icon_empty.svg",
+    "busy": "icon_busy.svg",
+    "safety": "icon_safety.svg",
+    "modified": "icon_modified.svg",
+    "error": "icon_error.svg",
+    "lock": "icon_lock.svg"
 }
 
 
 class IconProvider:
-    """Genera y cachea QIcons limpios en memoria a partir de los vectores SVG."""
-    _cache = {}
+    """
+    Loads, renders, and caches vector icons from the assets/ directory.
+    Uses QSvgRenderer to produce crisp antialiased pixmaps at any requested size.
+    """
+    _cache: dict[tuple[str, int], QIcon] = {}
 
     @classmethod
     def get(cls, state_key: str, size: int = 18) -> QIcon:
-        key = (state_key.lower().strip(), size)
-        if key in cls._cache:
-            return cls._cache[key]
+        """
+        Retrieves a cached QIcon for the given state key and pixel size.
 
-        svg_str = SVG_ICONS.get(key[0], SVG_ICONS["unmodified"])
-        byte_array = QByteArray(svg_str.encode("utf-8"))
-        renderer = QSvgRenderer(byte_array)
+        Args:
+            state_key (str): State identifier (e.g., 'ready', 'unmodified', 'error').
+            size (int): Target bounding square dimension in pixels.
 
-        pixmap = QPixmap(size, size)
-        pixmap.fill(Qt.transparent)
+        Returns:
+            QIcon: Rendered icon instance.
+        """
+        clean_key = state_key.lower().strip()
+        cache_lookup = (clean_key, size)
+        
+        if cache_lookup in cls._cache:
+            return cls._cache[cache_lookup]
 
-        painter = QPainter(pixmap)
-        painter.setRenderHint(QPainter.Antialiasing)
-        renderer.render(painter)
-        painter.end()
+        filename = ASSET_ICON_MAP.get(clean_key, "icon_unassigned_1.svg")
+        icon_path = os.path.join(Paths.BUNDLE_DIR, "assets", filename)
 
-        icon = QIcon(pixmap)
-        cls._cache[key] = icon
+        if os.path.exists(icon_path):
+            renderer = QSvgRenderer(icon_path)
+            pixmap = QPixmap(size, size)
+            pixmap.fill(Qt.transparent)
+
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            renderer.render(painter)
+            painter.end()
+
+            icon = QIcon(pixmap)
+        else:
+            logger.warning(f"[ICON_PROVIDER] Vector asset not found: {icon_path}")
+            icon = QIcon()
+
+        cls._cache[cache_lookup] = icon
         return icon
 
 
 # ==============================================================================
-# LISTA DE ARCHIVOS (PROJECT ASSETS)
+# PROJECT ASSET LIST WIDGET
 # ==============================================================================
 class FileListWidget(QListWidget):
+    """
+    Project assets explorer displaying image queues, processing status icons,
+    and user check boxes for selective batch processing.
+    """
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet("""
@@ -119,6 +112,12 @@ class FileListWidget(QListWidget):
         self.setIconSize(QSize(16, 16))
 
     def add_file(self, full_path: str):
+        """
+        Appends an image file to the asset list with default unmodified state.
+
+        Args:
+            full_path (str): Absolute file system path to the image.
+        """
         fname = os.path.basename(full_path)
         item = QListWidgetItem(IconProvider.get("unmodified"), fname)
         item.setData(Qt.UserRole, full_path)
@@ -128,6 +127,14 @@ class FileListWidget(QListWidget):
         self.addItem(item)
 
     def update_item_state(self, full_path: str, state_str: str, tooltip_msg: str = ""):
+        """
+        Updates the status icon and tooltip metadata for a target image item.
+
+        Args:
+            full_path (str): Target image path identifier.
+            state_str (str): Canonical state string (e.g. 'ready', 'error', 'waiting').
+            tooltip_msg (str, optional): Custom status text for hover tooltip.
+        """
         clean_state = state_str.lower().strip()
         icon = IconProvider.get(clean_state)
         fname = os.path.basename(full_path)
@@ -136,17 +143,17 @@ class FileListWidget(QListWidget):
             it = self.item(i)
             if it.data(Qt.UserRole) == full_path:
                 it.setIcon(icon)
-                if tooltip_msg:
-                    it.setToolTip(f"{fname}\nStatus: {tooltip_msg}")
-                else:
-                    it.setToolTip(f"{fname}\nStatus: {clean_state.capitalize()}")
+                status_desc = tooltip_msg if tooltip_msg else clean_state.capitalize()
+                it.setToolTip(f"{fname}\nStatus: {status_desc}")
                 break
 
 
 # ==============================================================================
-# MONITOR DE HARDWARE (RAM / TELEMETRÍA)
+# HARDWARE TELEMETRY MONITOR (RAM USAGE)
 # ==============================================================================
 class HardwareMonitor(QWidget):
+    """Compact navbar widget providing real-time process RAM usage telemetry."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         lay = QHBoxLayout(self)

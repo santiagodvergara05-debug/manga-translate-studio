@@ -1,4 +1,3 @@
-import os
 import re
 import json
 import base64
@@ -14,13 +13,15 @@ IGNORE_PATTERNS = re.compile(
     re.IGNORECASE
 )
 
+
 class ProviderStatus(Enum):
-    SUCCESS = auto()         # Dialogues extracted and translated
-    EMPTY = auto()           # 200 OK but page is silent (no text)
-    SAFETY_BLOCKED = auto()  # Content moderation filter triggered
-    SERVER_BUSY = auto()     # 503 / 429 temporary overload
-    QUOTA_EXHAUSTED = auto() # Daily quota exhausted (RPD)
-    ERROR = auto()           # Fatal error / Bad Request
+    SUCCESS = auto()          # Dialogues extracted and translated
+    EMPTY = auto()            # HTTP 200 OK but page is silent (no text)
+    SAFETY_BLOCKED = auto()   # Content moderation filter triggered
+    SERVER_BUSY = auto()      # Temporary overload (503 / 429 / Read Timeout)
+    QUOTA_EXHAUSTED = auto()  # Daily quota exhausted (RPD)
+    ERROR = auto()            # Unrecoverable error / Bad Request
+
 
 @dataclass
 class TranslationResult:
@@ -39,8 +40,18 @@ class DailyQuotaExceeded(Exception):
 class BaseAIProvider(ABC):
     """Abstract base class for all AI vision translation providers."""
 
-    def __init__(self, name: str):
-        self.name = name
+    # UI schema configuration for dynamic rendering in TranslatorPanel
+    display_name: str = "Unknown Provider"
+    requires_endpoint: bool = False
+    has_lan_mode: bool = False
+    is_primary_secret: bool = True
+    primary_placeholder: str = "Enter API Key..."
+    secondary_placeholder: str = "Enter Cloud Token..."
+    default_endpoint: str = ""
+    default_models: list[str] = []
+
+    def __init__(self, provider_id: str):
+        self.provider_id = provider_id
 
     @abstractmethod
     def test_and_fetch_models(self, key_or_url: str, auth_token: str = "") -> tuple[bool, list[str], str]:
@@ -62,6 +73,7 @@ class BaseAIProvider(ABC):
 
     @staticmethod
     def encode_image(image_path: str, target_w: int = 1100, quality: int = 85) -> str:
+        """Scales image in memory and encodes it to a base64 JPEG string."""
         with Image.open(image_path) as img:
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
@@ -76,6 +88,7 @@ class BaseAIProvider(ABC):
 
     @staticmethod
     def clean_json_response(raw_text: str) -> dict:
+        """Extracts and parses valid JSON from LLM response text."""
         text = raw_text.strip()
         match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
         if match:
@@ -83,8 +96,9 @@ class BaseAIProvider(ABC):
         else:
             start = text.find("{")
             end = text.rfind("}")
-            if start != -1 and end != -1:
+            if start != -1 and end != -1 and end > start:
                 text = text[start:end + 1]
+
         data = json.loads(text)
         if isinstance(data, list):
             data = {"bubbles": data}
@@ -92,6 +106,7 @@ class BaseAIProvider(ABC):
 
     @staticmethod
     def normalize_bubbles(data: dict) -> list[dict]:
+        """Validates and standardizes extracted dialogue entries."""
         raw_bubbles = data.get("bubbles", [])
         if not isinstance(raw_bubbles, list):
             return []

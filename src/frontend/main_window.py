@@ -1,3 +1,10 @@
+"""
+Main application controller and primary window orchestration.
+
+Manages layout components, asynchronous batch translation queues, rate limiting,
+system telemetry updates, and bidirectional synchronization with the canvas and translation engine.
+"""
+
 import os
 import re
 import cv2
@@ -20,7 +27,7 @@ from src.utils.system_info import SystemMonitor
 from src.utils.config import Config
 from src.utils.logger import logger
 from src.backend.translator import TranslatorPanel, TranslationScriptEngine
-from src.backend.ai_client import MultimodalTranslationWorker
+from src.backend.ai_client import MultimodalTranslationWorker, AIClientManager
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.frontend.project_reset import ProjectResetController
 
@@ -32,6 +39,7 @@ MIN_INTERVAL = {"gemini": 4.5, "ollama": 0.5}
 #          PAGE STATE ENUM         #
 # /////////////////////////////////#
 class PageState(Enum):
+    """Execution state tracking for imported chapter pages."""
     UNMODIFIED = auto()
     MODIFIED = auto()
     WAITING = auto()
@@ -47,6 +55,8 @@ class PageState(Enum):
 # /////////////////////////////////#
 
 class MainWindow(QMainWindow):
+    """Main window controller for Manga Translate Studio."""
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{Config.APP_NAME} v{Config.VERSION} - Script Generator")
@@ -86,6 +96,7 @@ class MainWindow(QMainWindow):
         logger.info("--- MANGA TRANSLATE STUDIO INTERFACE READY ---")
 
     def init_ui(self):
+        """Builds central layout, header navigation bar, sidebars, and main graphics view."""
         self.central = QWidget()
         self.setCentralWidget(self.central)
         main_lay = QVBoxLayout(self.central)
@@ -243,7 +254,7 @@ class MainWindow(QMainWindow):
     # --- UI LOCKING & WORKSPACE ISOLATION ---
     def set_batch_ui_locked(self, locked: bool):
         """
-        Completely disables/enables navigation, import, and reset controls
+        Disables or enables navigation, import, and reset controls
         to prevent race conditions and unintended project mutation during execution.
         """
         self.btn_open.setEnabled(not locked)
@@ -253,7 +264,7 @@ class MainWindow(QMainWindow):
         self.translator_page.set_locked(locked)
 
     def on_project_reset_requested(self):
-        """Prevents project wipe when inference processes are running."""
+        """Prevents project wipe when inference processes are actively running."""
         if self.is_batching or (self.worker_thread and self.worker_thread.isRunning()):
             QMessageBox.warning(
                 self, 
@@ -266,10 +277,10 @@ class MainWindow(QMainWindow):
 
     # --- BATCH TRANSLATION ORCHESTRATION ---
     def on_batch_button_clicked(self):
+        """Starts a new batch run or toggles pause/resume states on an existing queue."""
         if not self.is_batching:
             self.on_start_batch_translate()
         else:
-            # Toggle Pause / Resume state
             if not self.is_paused:
                 self.is_paused = True
                 self.btn_batch.setText("▶ RESUME BATCH")
@@ -281,33 +292,45 @@ class MainWindow(QMainWindow):
                 self.step_batch_translate()
 
     def on_cancel_batch_clicked(self):
-        """Fully terminates batch queue execution immediately."""
+        """Immediately stops the batch queue and prevents remaining pages from dispatching."""
         if not self.is_batching:
             return
 
         self.stop_requested = True
         self.stop_reason = "user"
         self.is_paused = False
+        
+        # Clear remaining queued tasks immediately
+        self.batch_queue.clear()
+        
         self.btn_cancel_batch.setEnabled(False)
         self.btn_batch.setEnabled(False)
         self.btn_batch.setText("⏳ Stopping...")
 
-        # If a worker thread is running, abort cleanly
-        if self.worker_thread and self.worker_thread.isRunning():
-            self.worker_thread.quit()
-            self.worker_thread.wait(1500)
-            self.worker_thread = None
-
-        self.finalize_batch_translate()
+        # If no background inference is in flight, finalize immediately
+        if not self.worker_thread or not self.worker_thread.isRunning():
+            self.finalize_batch_translate()
 
     def on_start_batch_translate(self):
+        """Validates credentials, prepares the processing queue, and triggers execution."""
         if self.file_list.count() == 0:
             return
 
-        provider = self.translator_page.provider_combo.currentText().lower()
-        if provider == "gemini" and not self.translator_page.gemini_key:
-            QMessageBox.warning(self, "API Key Required", "Please enter your Gemini API Key in the right panel.")
-            return
+        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
+        provider_engine = AIClientManager.get_provider(provider_id)
+
+        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
+        has_lan = getattr(provider_engine, "has_lan_mode", False)
+
+        if not requires_endpoint:
+            if not self.translator_page.primary_input.text().strip():
+                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.translator_page.provider_combo.currentText()} API Key.")
+                return
+        else:
+            is_lan = has_lan and self.translator_page.chk_lan_mode.isChecked()
+            if not is_lan and not self.translator_page.secondary_input.text().strip():
+                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.translator_page.provider_combo.currentText()} Cloud API Key.")
+                return
 
         all_paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
         paths = [
@@ -367,17 +390,20 @@ class MainWindow(QMainWindow):
         self.step_batch_translate()
 
     def _next_delay_ms(self) -> int:
-        provider = self.translator_page.provider_combo.currentText().lower()
-        wait = MIN_INTERVAL.get(provider, 1.0) - (time.monotonic() - self._last_request_ts)
+        """Calculates sleep duration in milliseconds to enforce provider rate limits."""
+        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
+        wait = MIN_INTERVAL.get(provider_id, 1.0) - (time.monotonic() - self._last_request_ts)
         return int(max(0.3, wait) * 1000)
 
     def _schedule_next(self):
+        """Schedules execution of the next queued page via single-shot timer."""
         if self.stop_requested or not self.batch_queue:
             self.finalize_batch_translate()
         elif not self.is_paused:
             QTimer.singleShot(self._next_delay_ms(), self.step_batch_translate)
 
     def step_batch_translate(self):
+        """Dispatches the next image inference task in a background QThread."""
         if self.stop_requested or not self.batch_queue:
             self.finalize_batch_translate()
             return
@@ -397,22 +423,26 @@ class MainWindow(QMainWindow):
         self.page_states[target_path] = PageState.WAITING
         self.file_list.update_item_state(target_path, "waiting", "Translating in progress...")
 
-        provider = self.translator_page.provider_combo.currentText().lower()
-        selected_model = self.translator_page.model_combo.currentText().strip()
-        is_ollama = (provider == "ollama")
+        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
+        provider_engine = AIClientManager.get_provider(provider_id)
+        default_models = getattr(provider_engine, "default_models", [])
+        selected_model = self.translator_page.model_combo.currentText().strip() or (default_models[0] if default_models else "")
 
-        if is_ollama:
-            ollama_url = "http://localhost:11434" if self.translator_page.chk_lan_mode.isChecked() else self.translator_page.ollama_url
-            ollama_token = "" if self.translator_page.chk_lan_mode.isChecked() else self.translator_page.ollama_token
-            gemini_key = ""
-            if not selected_model:
-                selected_model = "gemma4:31b-cloud"
+        api_key = ""
+        endpoint_url = ""
+        token = ""
+
+        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
+        has_lan = getattr(provider_engine, "has_lan_mode", False)
+
+        if requires_endpoint:
+            if has_lan and self.translator_page.chk_lan_mode.isChecked():
+                endpoint_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
+            else:
+                endpoint_url = self.translator_page.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
+                token = self.translator_page.secondary_input.text().strip()
         else:
-            gemini_key = self.translator_page.gemini_key
-            ollama_url = ""
-            ollama_token = ""
-            if not selected_model:
-                selected_model = "gemini-3.1-flash-lite"
+            api_key = self.translator_page.primary_input.text().strip()
 
         # Inject continuity context from previous page if applicable
         if hasattr(self.translator_page, "build_prompt_for"):
@@ -426,11 +456,11 @@ class MainWindow(QMainWindow):
         self.worker = MultimodalTranslationWorker(
             image_path=target_path,
             full_prompt=full_prompt,
-            provider=provider,
+            provider=provider_id,
             model_name=selected_model,
-            api_key=gemini_key,
-            ollama_url=ollama_url,
-            ollama_token=ollama_token
+            api_key=api_key,
+            ollama_url=endpoint_url,
+            ollama_token=token
         )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
@@ -441,6 +471,8 @@ class MainWindow(QMainWindow):
         self.worker_thread.start()
 
     def on_batch_page_finished(self, path: str, result: TranslationResult):
+        """Processes background inference results and transitions page state."""
+        # Gracefully release background thread handle
         if self.worker_thread:
             self.worker_thread.quit()
             self.worker_thread.wait()
@@ -482,9 +514,13 @@ class MainWindow(QMainWindow):
         if path == self.current_img_path:
             self.translator_page.populate_bubble_editor(result.bubbles)
 
-        self._schedule_next()
+        if self.stop_requested:
+            self.finalize_batch_translate()
+        else:
+            self._schedule_next()
 
     def on_batch_page_error(self, path: str, error_msg: str):
+        """Handles unhandled worker thread errors during batch translation."""
         if self.worker_thread:
             self.worker_thread.quit()
             self.worker_thread.wait()
@@ -498,7 +534,7 @@ class MainWindow(QMainWindow):
             self.stop_requested = True
             self.stop_reason = "quota"
             logger.warning(f"[BATCH QUOTA] Daily quota exhausted on {os.path.basename(path)}. Halting batch.")
-            self._schedule_next()
+            self.finalize_batch_translate()
             return
 
         self.completed_batch_tasks += 1
@@ -510,9 +546,14 @@ class MainWindow(QMainWindow):
         self.failed_batch_tasks.append((fname, error_msg[:60], path))
 
         logger.error(f"[BATCH ERROR] on {path}: {error_msg}")
-        self._schedule_next()
+
+        if self.stop_requested:
+            self.finalize_batch_translate()
+        else:
+            self._schedule_next()
 
     def finalize_batch_translate(self):
+        """Concludes the batch run, unlocks controls, and reports completed and failed tasks."""
         self.is_batching = False
         self.is_paused = False
         self.progress_bar.setVisible(False)
@@ -572,6 +613,7 @@ class MainWindow(QMainWindow):
 
     # --- SCRIPT EXPORT AND PERSISTENCE ---
     def on_batch_write_all_to_txt(self):
+        """Flushes active dialogues across all project pages into the target .txt script."""
         self.translator_page.save_current_page_editor()
 
         paths = self.translator_page._get_all_project_paths()
@@ -612,6 +654,7 @@ class MainWindow(QMainWindow):
 
     # --- PAGE NAVIGATION & ASSET SYNCHRONIZATION ---
     def on_open_folder(self):
+        """Opens directory picker and initializes project assets."""
         p = QFileDialog.getExistingDirectory(self, "Select Folder")
         if p:
             self.image_sessions.clear()
@@ -632,12 +675,14 @@ class MainWindow(QMainWindow):
             self.translator_page.refresh_series_folders()
 
     def mark_current_modified(self):
+        """Marks active page as modified when user manually changes dialogues."""
         if self.current_img_path:
             if self.page_states.get(self.current_img_path) != PageState.MODIFIED:
                 self.page_states[self.current_img_path] = PageState.MODIFIED
                 self.file_list.update_item_state(self.current_img_path, "modified", "Locally modified")
 
     def on_file_clicked(self, it):
+        """Loads selected image into canvas viewer and renders its dialogue editor."""
         path_real = it.data(Qt.UserRole)
         if path_real == self.current_img_path:
             return
@@ -651,50 +696,65 @@ class MainWindow(QMainWindow):
             img = self.image_sessions[path_real]
             self.canvas.set_image(img)
         else:
-            img_data = np.fromfile(path_real, dtype=np.uint8)
-            img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
-            if img is not None:
-                if len(img.shape) == 2:
-                    img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-                elif len(img.shape) == 3 and img.shape[2] == 4:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
-                else:
-                    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            try:
+                img_data = np.fromfile(path_real, dtype=np.uint8)
+                img = cv2.imdecode(img_data, cv2.IMREAD_UNCHANGED)
+                if img is not None:
+                    if len(img.shape) == 2:
+                        img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
+                    elif len(img.shape) == 3 and img.shape[2] == 4:
+                        img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+                    else:
+                        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
 
-                self.canvas.set_image(img)
-                self.image_sessions[path_real] = img
-            else:
-                QMessageBox.warning(self, "Image Decode Error", f"Failed to decode image file:\n{os.path.basename(path_real)}")
+                    self.canvas.set_image(img)
+                    self.image_sessions[path_real] = img
+                else:
+                    QMessageBox.warning(self, "Image Decode Error", f"Failed to decode image file:\n{os.path.basename(path_real)}")
+            except Exception as e:
+                QMessageBox.warning(self, "Image Load Error", f"Could not load image file:\n{e}")
 
         self.translator_page.load_page_state(path_real)
 
     def toggle_all_files(self, checked):
+        """Toggles check state for all items in the assets list."""
         state = Qt.Checked if checked else Qt.Unchecked
         for i in range(self.file_list.count()):
             self.file_list.item(i).setCheckState(state)
 
     def keyPressEvent(self, event):
+        """Activates hand drag mode while Spacebar is held down."""
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
             self.is_space_moving = True
             self.canvas.setDragMode(QGraphicsView.ScrollHandDrag)
         super().keyPressEvent(event)
 
     def keyReleaseEvent(self, event):
+        """Restores normal canvas cursor upon Spacebar release."""
         if event.key() == Qt.Key_Space and not event.isAutoRepeat():
             self.is_space_moving = False
             self.canvas.setDragMode(QGraphicsView.NoDrag)
         super().keyReleaseEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
+        """Safely stops active background worker threads prior to window destruction."""
         if self.is_batching:
             self.stop_requested = True
             self.batch_queue.clear()
             if self.worker_thread and self.worker_thread.isRunning():
+                # Disconnect signals to avoid delivering events to destroyed UI elements
+                if self.worker:
+                    try:
+                        self.worker.finished.disconnect()
+                        self.worker.error.disconnect()
+                    except RuntimeError:
+                        pass
                 self.worker_thread.quit()
-                self.worker_thread.wait(2000)
+                self.worker_thread.wait(1000)
         super().closeEvent(event)
 
     def update_telemetry(self):
+        """Updates hardware telemetry meters on the navigation bar."""
         ram, _ = self.monitor.get_stats()
         self.hw_mon.lbl.setText(f"RAM: {ram}MB")
         self.hw_mon.bar.setValue(min(ram // 40, 100))

@@ -20,6 +20,15 @@ class OllamaProvider(BaseAIProvider):
     2. Cloud / OpenAI-compatible reverse proxies (e.g., https://ollama.com/v1 via /chat/completions)
     """
 
+    display_name = "Ollama"
+    requires_endpoint = True
+    has_lan_mode = True
+    is_primary_secret = False
+    primary_placeholder = "https://ollama.com/v1"
+    secondary_placeholder = "Enter Ollama Cloud API Key..."
+    default_endpoint = "http://localhost:11434"
+    default_models = ["gemma4:31b-cloud"]
+
     def __init__(self):
         super().__init__("ollama")
 
@@ -29,14 +38,14 @@ class OllamaProvider(BaseAIProvider):
         Normalizes and formats the target endpoint URL.
         
         Ensures a proper protocol scheme (http:// for local subnets, https:// otherwise)
-        and strips trailing slashes to ensure consistent endpoint concatenation.
+        and strips trailing slashes to guarantee consistent route concatenation.
         """
         clean = url.strip() if url else default
         if not clean:
             clean = default
             
         if not clean.startswith("http://") and not clean.startswith("https://"):
-            # Automatically assign plain HTTP to standard local loopback and private subnets
+            # Automatically assign plain HTTP to standard loopback and private subnets
             if any(local in clean.lower() for local in ("localhost", "127.0.0.1", "192.168.", "10.", "172.")):
                 clean = f"http://{clean}"
             else:
@@ -48,8 +57,7 @@ class OllamaProvider(BaseAIProvider):
         """
         Validates connectivity and queries available models from the target Ollama instance.
         
-        Attempts probing both the OpenAI-compatible (/v1/models) endpoint and 
-        the native Ollama daemon endpoint (/api/tags).
+        Probes both the OpenAI-compatible (/v1/models) endpoint and the native daemon endpoint (/api/tags).
         
         Returns:
             tuple[bool, list[str], str]: (success_flag, list_of_model_names, status_message)
@@ -59,7 +67,7 @@ class OllamaProvider(BaseAIProvider):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
 
         try:
-            # 1. Probe cloud or proxy endpoint (/v1)
+            # 1. Probe cloud or proxy endpoint if explicitly specified as /v1
             if base_url.endswith("/v1"):
                 res = requests.get(f"{base_url}/models", headers=headers, timeout=10)
                 if res.status_code == 200:
@@ -69,9 +77,12 @@ class OllamaProvider(BaseAIProvider):
                 elif res.status_code in (401, 403):
                     return False, [], "Invalid or missing Ollama Cloud API Key."
 
+            # Determine clean base URL without trailing /v1 for native endpoints
+            root_url = base_url[:-3] if base_url.endswith("/v1") else base_url
+
             # 2. Probe native local Ollama daemon (/api/tags)
             try:
-                res_local = requests.get(f"{base_url}/api/tags", headers=headers, timeout=8)
+                res_local = requests.get(f"{root_url}/api/tags", headers=headers, timeout=8)
                 if res_local.status_code == 200:
                     models = [m.get("name") for m in res_local.json().get("models", []) if m.get("name")]
                     if models:
@@ -79,12 +90,16 @@ class OllamaProvider(BaseAIProvider):
             except Exception:
                 pass
 
-            # 3. Fallback attempt against /models route
-            res_fb = requests.get(f"{base_url}/models", headers=headers, timeout=8)
-            if res_fb.status_code == 200:
-                models = [m.get("id") for m in res_fb.json().get("data", []) if m.get("id")]
-                if models:
-                    return True, models, "Connected to Ollama."
+            # 3. Fallback attempt against /v1/models or /models route
+            for probe_path in (f"{root_url}/v1/models", f"{root_url}/models"):
+                try:
+                    res_fb = requests.get(probe_path, headers=headers, timeout=8)
+                    if res_fb.status_code == 200:
+                        models = [m.get("id") for m in res_fb.json().get("data", []) if m.get("id")]
+                        if models:
+                            return True, models, "Connected to Ollama."
+                except Exception:
+                    continue
 
             return False, [], f"Could not retrieve models from {base_url}."
             
@@ -138,11 +153,12 @@ class OllamaProvider(BaseAIProvider):
                     }
                     res = requests.post(url, headers=headers, json=payload, timeout=120)
                     
-                    # Handle Rate Limits (HTTP 429)
+                    # Handle rate limits and distinguish from exhausted monthly/credit quota
                     if res.status_code == 429:
-                        body_err = res.text
-                        if "quota" in body_err.lower() or "limit" in body_err.lower():
-                            raise DailyQuotaExceeded("Monthly or daily quota exhausted on Ollama Cloud.")
+                        body_err = res.text.lower()
+                        if any(term in body_err for term in ("insufficient_quota", "quota_exceeded", "credit", "billing", "monthly")) and "rate limit" not in body_err:
+                            raise DailyQuotaExceeded("Monthly or credit quota exhausted on Ollama Cloud.")
+                        
                         if attempt < max_retries:
                             time.sleep(6 * (attempt + 1))
                             continue
@@ -151,6 +167,15 @@ class OllamaProvider(BaseAIProvider):
                             usage=usage_info,
                             message="Rate limit reached (429). Retry in a few moments.",
                             raw_error=res.text[:120]
+                        )
+
+                    # Non-retryable client errors
+                    if res.status_code in (400, 401, 403, 404):
+                        return TranslationResult(
+                            status=ProviderStatus.ERROR,
+                            usage=usage_info,
+                            message=f"Client error ({res.status_code}): Check API key or selected model.",
+                            raw_error=res.text[:200]
                         )
                         
                     # Handle transient server errors
@@ -166,13 +191,22 @@ class OllamaProvider(BaseAIProvider):
                         )
                         
                     res.raise_for_status()
-
                     res_json = res.json()
-                    raw_text = res_json["choices"][0]["message"]["content"]
+
+                    choices = res_json.get("choices", [])
+                    if not choices:
+                        return TranslationResult(
+                            status=ProviderStatus.ERROR,
+                            usage=usage_info,
+                            message="Ollama returned empty completion choices.",
+                            raw_error="choices=[]"
+                        )
+
+                    raw_text = choices[0].get("message", {}).get("content", "")
                     parsed = self.clean_json_response(raw_text)
                     bubbles = self.normalize_bubbles(parsed)
 
-                    u = res_json.get("usage", {})
+                    u = res_json.get("usage", {}) or {}
                     p_tok = u.get("prompt_tokens", 0)
                     c_tok = u.get("completion_tokens", 0)
                     usage_info = {"prompt_tokens": p_tok, "output_tokens": c_tok, "total_tokens": p_tok + c_tok}
@@ -189,6 +223,15 @@ class OllamaProvider(BaseAIProvider):
                         "options": {"num_ctx": 8192, "temperature": 0.2}
                     }
                     res = requests.post(url, headers=headers, json=payload, timeout=120)
+
+                    # Non-retryable client errors
+                    if res.status_code in (400, 401, 403, 404):
+                        return TranslationResult(
+                            status=ProviderStatus.ERROR,
+                            usage=usage_info,
+                            message=f"Local Ollama error ({res.status_code}): Check endpoint or model installation.",
+                            raw_error=res.text[:200]
+                        )
                     
                     if res.status_code in RETRYABLE_STATUS_CODES:
                         if attempt < max_retries:
@@ -202,8 +245,16 @@ class OllamaProvider(BaseAIProvider):
                         )
                         
                     res.raise_for_status()
-
                     res_json = res.json()
+
+                    if "error" in res_json:
+                        return TranslationResult(
+                            status=ProviderStatus.ERROR,
+                            usage=usage_info,
+                            message=f"Ollama daemon error: {res_json['error']}",
+                            raw_error=str(res_json["error"])
+                        )
+
                     raw_text = res_json.get("response", "{}")
                     parsed = self.clean_json_response(raw_text)
                     bubbles = self.normalize_bubbles(parsed)

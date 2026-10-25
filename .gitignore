@@ -10,35 +10,35 @@ env/
 ENV/
 .venv/
 
-# Application Cache & Sensitive Configs (CRITICAL: API keys stored in plain text)
-cache/
-cache/api_config.json
-cache/user_rules.txt
-cache/core_rules.txt
+# Application Cache & Sensitive Configs (CRITICAL: API keys & rules cache)
+cache/*
+!cache/.gitkeep
 
-# Application Logs
-logs/
+# Application Logs & Diagnostics
+logs/*
+!logs/.gitkeep
 *.log
 
-# Workspace & Scripts (User translations and manga files)
-translations/
-processed/
-*.txt
-!requirements.txt
+# Workspace & User Data (Scripts and processed manga files)
+translations/*
+!translations/.gitkeep
+processed/*
+!processed/.gitkeep
 
 # PyInstaller / Build Artifacts
 build/
 dist/
 *.spec
 _internal/
+MangaTranslate_Data/
 *.exe
 
-# OS generated files
+# OS generated metadata
 .DS_Store
 Thumbs.db
 desktop.ini
 
-# IDEs and Code Editors
+# IDEs & Editor Configuration
 .vscode/
 .idea/
 *.sublime-workspace

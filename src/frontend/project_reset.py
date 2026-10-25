@@ -1,7 +1,8 @@
-"""In-memory project reset controller for Manga Translate Studio.
+"""
+In-memory project reset controller for Manga Translate Studio.
 
-Place this module at: src/frontend/project_reset.py
-Clears translation queues, loaded script data, and visual layers while preserving preferences.
+Clears translation queues, session dialogues, cached rasters, and visual layers 
+while preserving user preferences and configured API credentials.
 """
 
 from __future__ import annotations
@@ -11,26 +12,34 @@ import gc
 import sys
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QMessageBox
 
 from src.utils.logger import logger
 
 
 class ProjectResetController:
-    """Limpia la memoria del proyecto actual sin cerrar la ventana principal."""
+    """Manages workspace cleanup and dynamic RAM deallocation without closing the application."""
 
     @staticmethod
     def reset(main_window) -> bool:
+        """
+        Purges active project assets, memory sessions, and viewport items.
+
+        Args:
+            main_window (MainWindow): The parent studio main window instance.
+
+        Returns:
+            bool: True if project was successfully reset, False if aborted or redundant.
+        """
         mw = main_window
 
-        # Evitar resetear si hay una petición a la API o un lote en curso
+        # Prevent reset execution if background inference or batch queue is active
         if getattr(mw, "worker_thread", None) is not None or getattr(mw, "is_batching", False):
             QMessageBox.warning(
                 mw,
-                "Estudio Ocupado",
-                "No se puede reiniciar el proyecto mientras haya una traducción o procesamiento por lotes activo.\n\n"
-                "Espera a que finalice el proceso o detén la tarea antes de reiniciar.",
+                "Studio Busy",
+                "Cannot reset workspace while translation or batch processing is active.\n\n"
+                "Please wait for the process to complete or abort the batch before resetting.",
             )
             return False
 
@@ -53,20 +62,20 @@ class ProjectResetController:
 
         answer = QMessageBox.question(
             mw,
-            "Reiniciar Proyecto",
-            "¿Deseas vaciar el proyecto actual de la memoria?\n\n"
-            "Se eliminarán las páginas cargadas, las traducciones en sesión y las colas activas. "
-            "Los archivos en disco y tus credenciales de API se conservarán intactos.",
+            "Reset Project",
+            "Do you want to purge the current project from memory?\n\n"
+            "Loaded pages, active translation sessions, and queues will be cleared. "
+            "Files on disk and your configured API credentials will remain intact.",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if answer != QMessageBox.Yes:
             return False
 
-        # Desvincular ruta activa antes de limpiar la UI para evitar reentradas de señales
+        # Decouple active path before resetting UI to avoid signal recursion
         mw.current_img_path = None
 
-        # Limpiar estados internos de imágenes y colas
+        # Clear internal image sessions and queue tracking collections
         if hasattr(mw, "image_sessions"):
             mw.image_sessions.clear()
         if hasattr(mw, "page_states"):
@@ -82,7 +91,7 @@ class ProjectResetController:
         mw.stop_requested = False
         mw.stop_reason = None
 
-        # Limpiar lista visual de archivos
+        # Reset asset file list and select-all toggle
         if hasattr(mw, "chk_all"):
             mw.chk_all.blockSignals(True)
             mw.chk_all.setChecked(False)
@@ -91,27 +100,25 @@ class ProjectResetController:
         if hasattr(mw, "file_list"):
             mw.file_list.clear()
 
-        # Limpiar lienzo gráfico
+        # Reset graphics canvas and viewport transformation
         if canvas is not None:
             canvas.blockSignals(True)
             try:
-                canvas.cv_img = None
-                if hasattr(canvas, "image_item") and canvas.image_item is not None:
-                    canvas.image_item.setPixmap(QPixmap())
+                if hasattr(canvas, "set_image"):
+                    canvas.set_image(None)
                 if hasattr(canvas, "scene") and canvas.scene is not None:
                     canvas.scene.clearSelection()
-                    canvas.scene.setSceneRect(0, 0, 0, 0)
                 canvas.resetTransform()
                 if hasattr(canvas, "set_locked"):
                     canvas.set_locked(False)
             finally:
                 canvas.blockSignals(False)
 
-        # Liberar worker si quedó referenciado
+        # Release worker references if lingering
         mw.worker = None
         mw.worker_thread = None
 
-        # Limpiar datos específicos del panel de traducción
+        # Reset translation workspace data and dialogue cards
         if translator is not None:
             translator.loaded_script_path = None
             translator.path_dialogues_map.clear()
@@ -123,13 +130,17 @@ class ProjectResetController:
             if hasattr(translator, "populate_bubble_editor"):
                 translator.populate_bubble_editor([])
 
-            if hasattr(translator, "refresh_translations_scripts_list"):
-                translator.refresh_translations_scripts_list()
+            # Synchronize two-tier script hierarchy combo boxes
+            if hasattr(translator, "refresh_series_folders"):
+                translator.refresh_series_folders()
 
             if hasattr(translator, "lbl_api_status"):
                 translator.lbl_api_status.setVisible(False)
 
-        # Restablecer barra de progreso y botones
+            if hasattr(translator, "update_token_estimate"):
+                translator.update_token_estimate()
+
+        # Reset batch action buttons and progress indicator
         if hasattr(mw, "progress_bar"):
             mw.progress_bar.setValue(0)
             mw.progress_bar.setVisible(False)
@@ -138,28 +149,31 @@ class ProjectResetController:
             mw.btn_batch.setText("▶ RUN BATCH TRANSLATE")
             mw.btn_batch.setEnabled(True)
 
+        if hasattr(mw, "btn_cancel_batch"):
+            mw.btn_cancel_batch.setEnabled(False)
+
         mw.setCursor(Qt.ArrowCursor)
 
-        # Liberación forzada de memoria RAM
+        # Force immediate garbage collection and platform heap trimming
         gc.collect()
         ProjectResetController._trim_linux_heap()
 
         try:
             mw.update_telemetry()
         except Exception as exc:
-            logger.debug(f"[RESET] Telemetría omitida: {exc}")
+            logger.debug(f"[RESET] Telemetry refresh skipped: {exc}")
 
-        logger.info("[STUDIO] Reinicio de proyecto completado; memoria liberada con éxito.")
+        logger.info("[STUDIO] Project reset completed; memory reclaimed successfully.")
         QMessageBox.information(
             mw,
-            "Proyecto Reiniciado",
-            "El estudio se ha vaciado por completo y está listo para abrir una nueva carpeta de trabajo.",
+            "Project Reset",
+            "The studio workspace has been cleared and is ready to load a new project folder.",
         )
         return True
 
     @staticmethod
     def _trim_linux_heap() -> None:
-        """Devuelve memoria libre al SO en sistemas Linux con glibc."""
+        """Reclaims unmapped dynamic heap memory on Linux glibc runtimes."""
         if not sys.platform.startswith("linux"):
             return
         try:

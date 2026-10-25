@@ -1,15 +1,21 @@
-# /////////////////////////////////#
-#    GLOBAL STUDIO CONFIGURATION   #
-# /////////////////////////////////#
+"""
+Global application configuration and UI styling constants.
+
+Provides centralized access to application metadata, versioning,
+and the primary Deep Obsidian color palette.
+"""
+
 
 class Config:
-    APP_NAME = "Manga Translate Studio"
-    VERSION = "1.5.0 BETA"
+    """Centralized constant registry for application parameters and visual themes."""
 
-    # Deep Obsidian Theme
-    COLOR_BG = "#0b0b0e"
-    COLOR_PANEL = "#121217"
-    COLOR_ACCENT = "#00d4ff" 
-    COLOR_TEXT = "#e0e0e0"
-    COLOR_TEXT_DIM = "#808085"
-    COLOR_ERROR = "#ff4d4d"
+    APP_NAME: str = "Manga Translate Studio"
+    VERSION: str = "1.5.0 BETA"
+
+    # Deep Obsidian Theme Palette
+    COLOR_BG: str = "#0b0b0e"
+    COLOR_PANEL: str = "#121217"
+    COLOR_ACCENT: str = "#00d4ff"
+    COLOR_TEXT: str = "#e0e0e0"
+    COLOR_TEXT_DIM: str = "#808085"
+    COLOR_ERROR: str = "#ff4d4d"
