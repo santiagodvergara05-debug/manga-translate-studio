@@ -16,21 +16,9 @@ Instead of relying on standalone, error-prone OCR engines, MTS performs direct m
 
 ---
 
-## 🖥️ Studio Workflow & Interface
+## 🖥️ Studio Workflow & Interface (v1.5.0 UI)
 
-```text
-+-----------------------+---------------------------------------+-----------------------------+
-|    PROJECT ASSETS     |             MANGA CANVAS              |    TRANSLATOR WORKSPACE     |
-+-----------------------+---------------------------------------+-----------------------------+
-| [x] Image 001.png [✔] |                                       | 1. AI ENGINE & RULES        |
-| [x] Image 002.png [⏳]|   • Smooth Pan & Zoom Engine          |    [Gemini] [Manhwa] [⚙]    |
-| [ ] Image 003.png [💬]|   • Spacebar Hand Tool Navigation     |    From: English ➔ To: Span |
-| [ ] Image 004.png [!] |   • Middle-Click 1:1 Scale Reset      | 2. DETECTED DIALOGUES       |
-|                       |   • Lock Overlay Indicator            |    [BUBBLE #1] Direct/Formal|
-| [▶ RUN BATCH]         |                                       | 3. SCRIPT SYNC (.TXT)       |
-| [⏹ CANCEL BATCH]      |                                       |    Series ➔ Chapter Scripts |
-+-----------------------+---------------------------------------+-----------------------------+
-```
+![MANGA TRANSLATE STUDIO v1.5.0 UI](.github/Ui.png)
 
 
 ---
