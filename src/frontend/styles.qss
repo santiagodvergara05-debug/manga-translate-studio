@@ -1,0 +1,154 @@
+/*/////////////////////////////////*/
+/*      STUDIO DARK MODE QSS       */
+/*/////////////////////////////////*/
+
+QMainWindow, QWidget {
+    background-color: #0b0b0e;
+    color: #e0e0e0;
+    font-family: "Segoe UI", sans-serif;
+}
+
+#NavBar {
+    background-color: #121217;
+    border-bottom: 1px solid #1c1c22;
+}
+
+#SidePanel {
+    background-color: #0f0f13;
+    border: 1px solid #1c1c22;
+    padding: 10px;
+}
+
+#TitleLabel {
+    color: #00d4ff;
+    font-weight: bold;
+    font-size: 18px;
+}
+
+/* Tool Buttons */
+QPushButton {
+    background-color: #1c1c22;
+    border: 1px solid #2a2a32;
+    border-radius: 4px;
+    padding: 8px;
+    color: #b0b0b5;
+    font-weight: bold;
+    font-size: 11px;
+}
+
+QPushButton:hover {
+    background-color: #25252e;
+    color: #ffffff;
+}
+
+QPushButton:checked {
+    background-color: #00d4ff;
+    color: #000000;
+    border: 1px solid #00d4ff;
+}
+
+#PrimaryBtn {
+    background-color: #00d4ff;
+    color: #000000;
+    border: none;
+    font-size: 12px;
+}
+
+#PrimaryBtn:hover {
+    background-color: #33e0ff;
+}
+
+#ActionBtn {
+    border: 1px solid #00d4ff;
+    color: #00d4ff;
+}
+
+/* Sliders */
+QSlider::groove:horizontal {
+    border: 1px solid #2a2a32;
+    height: 4px;
+    background: #1c1c22;
+    margin: 2px 0;
+}
+
+QSlider::handle:horizontal {
+    background: #00d4ff;
+    border: 1px solid #00d4ff;
+    width: 14px;
+    height: 14px;
+    margin: -6px 0;
+    border-radius: 7px;
+}
+
+/* List Widget */
+QListWidget {
+    background-color: #121217;
+    border: 1px solid #1c1c22;
+    border-radius: 4px;
+    outline: none;
+    padding: 5px;
+}
+
+QListWidget::item {
+    padding: 8px;
+    border-bottom: 1px solid #1c1c22;
+}
+
+QListWidget::item:selected {
+    background-color: #1c1c22;
+    color: #00d4ff;
+    border-left: 3px solid #00d4ff;
+}
+
+/*/////////////////////////////////*/
+/*       SCROLLBAR STYLING         */
+/*/////////////////////////////////*/
+
+QScrollBar:vertical, QScrollBar:horizontal {
+    background: #0f0f13;
+    width: 12px;
+    height: 12px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+    background: #2a2a32;
+    min-height: 20px;
+    min-width: 20px;
+    border-radius: 6px;
+    margin: 2px;
+}
+
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {
+    background: #00d4ff;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    height: 0px;
+    width: 0px;
+}
+/*/////////////////////////////////*/
+/*        CHECKBOX STYLING         */
+/*/////////////////////////////////*/
+
+QCheckBox, QListView {
+    outline: none;
+}
+
+QCheckBox::indicator, QListView::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #00d4ff;
+    border-radius: 3px;
+    background-color: #121217;
+}
+
+QCheckBox::indicator:hover, QListView::indicator:hover {
+    border: 1px solid #00d4ff;
+}
+
+QCheckBox::indicator:checked, QListView::indicator:checked {
+    background-color: #00d4ff;
+    border: 1px solid #00d4ff;
+}

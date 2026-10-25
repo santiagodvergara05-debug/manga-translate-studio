@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv/
+
+# Application Cache & Sensitive Configs (CRITICAL: API keys stored in plain text)
+cache/
+cache/api_config.json
+cache/user_rules.txt
+cache/core_rules.txt
+
+# Application Logs
+logs/
+*.log
+
+# Workspace & Scripts (User translations and manga files)
+translations/
+processed/
+*.txt
+!requirements.txt
+
+# PyInstaller / Build Artifacts
+build/
+dist/
+*.spec
+_internal/
+*.exe
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDEs and Code Editors
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
