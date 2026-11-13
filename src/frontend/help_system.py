@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QDialog, QVBoxLayout, QTabWidget, QTextEdit, QPushButton
+from PySide6.QtWidgets import QDialog, QVBoxLayout, QTabWidget, QTextEdit, QTextBrowser, QPushButton
 from src.utils.config import Config
 
 # /////////////////////////////////#
@@ -31,7 +31,7 @@ class HelpSystem(QDialog):
             "<tr><td colspan='2'><b style='color: #00d4ff;'>— Viewport Navigation —</b></td></tr>"
             "<tr><td width='35%'><b>Hold [Space] + Drag</b></td><td>Smooth panning across the page canvas.</td></tr>"
             "<tr><td><b>Mouse Wheel</b></td><td>Scroll vertically through tall pages.</td></tr>"
-            "<tr><td><b>[Ctrl] + Mouse Wheel</b></td><td>Zoom in / out centered on the cursor.</td></tr>"
+            "<tr><td><b>[Ctrl] or [Alt] + Mouse Wheel</b></td><td>Zoom in / out centered on the cursor.</td></tr>"
             "<tr><td><b>[M]</b></td><td>Pan Tool toggle.</td></tr>"
             "<tr><td colspan='2'><hr color='#252530'></td></tr>"
             "<tr><td colspan='2'><b style='color: #00d4ff;'>— Page State & Assets —</b></td></tr>"
@@ -97,18 +97,19 @@ class HelpSystem(QDialog):
             "<li><b>Translation variants:</b> adds formal, aggressive, and natural fields. This can increase the response, especially when alternatives are generated. Disable it for direct translations only.</li>"
             "<li><b>Subtext:</b> adds an optional tone-note field. A note uses extra output tokens; disabling it removes that field. Subtext is for editor guidance and is not written to the translation .TXT.</li>"
             "<li><b>Explain sound-effect meaning:</b> adds a concise target-language meaning note to SFX cards only. It requires SFX extraction, adds output tokens for SFX, and is not written to the .TXT.</li>"
+            "<li><b>Skip identical repeated sound effects:</b> asks the model to return the first occurrence only when the same visible SFX lettering repeats on one page. It requires SFX extraction and may reduce duplicate output; distinct text and non-SFX entities remain unaffected.</li>"
             "<li><b>R19 vocalization mode:</b> adds a small amount of prompt text but no response field. It guides short vocalizations; the model may still interpret ambiguous lettering differently.</li>"
             "</ul>"
             "<h4>Usage, cache, and price tables</h4>"
             "<ul>"
             "<li>The <b>Usage / Prices</b> button opens request history and editable USD-per-million-token prices.</li>"
-            "<li>Usage history can be filtered by provider and usage group. <b>Clear all history</b> removes request records for every provider but keeps price tables and Gemini RPD counters.</li>"
+            "<li>Usage history can be filtered by provider. Each request is associated with its saved connection profile. <b>Clear all history</b> removes request records for every provider but keeps price tables and Gemini RPD counters.</li>"
             "<li>Import and export price rows as JSON. Imports merge by provider, model, and plan: matching rows are updated and unrelated rows are kept, so you can import several provider files. The community JSON files are in <code>Pricing_Models_Providers</code>. Prices are snapshots; check provider rates before relying on an estimate.</li>"
             "<li>New installations start with an empty price table and Gemini RPD limit set to 0 (meter off). <b>Not configured</b> means the app has no price rate to estimate against; add values from your provider's pricing source.</li>"
-            "<li>API Settings has saved <b>Connection profiles</b> that switch provider credentials and model together. The separate optional <b>Usage group</b> combines usage history and Gemini RPD values for keys sharing one account or project; leave it blank to track by an automatic credential fingerprint.</li>"
-            "<li>The main header's <b>API pace</b> selector applies to single and batch translations for every provider. <b>LOW</b> waits at least 4.1 seconds between requests per provider (under 15 RPM); <b>HIGH</b> waits at least 1.5 seconds. Provider retry backoff may add more delay.</li>"
+            "<li>API Settings has saved <b>Connection profiles</b> that switch provider credentials and model together. Usage history and Gemini RPD values are tracked per connection profile.</li>"
+            "<li>The main header's <b>API pace</b> selector applies to single and batch translations for every provider. Theoretical request-start ceilings are about <b>14.6 RPM</b> for <b>LOW</b> (4.1 seconds), <b>40 RPM</b> for <b>HIGH</b> (1.5 seconds), and <b>120 RPM</b> for <b>MAX</b> (0.5 seconds). Actual rates can be lower because of API processing time; MAX can trigger provider rate limits or HTTP 429 responses.</li>"
             "<li>Cache counts and percentages come from provider response metadata. A zero means that request reported no cached input; it does not identify why a cache miss occurred.</li>"
-            "<li>When Gemini is selected, the main header shows editable <b>RPD limit</b> and <b>RPD in use</b> fields. Set the limit to 0 to turn off the local meter. MTS increments RPD in use for each recorded Gemini request; usage resets at midnight Pacific time while the limit is kept. If usage exceeds a nonzero limit, the header shows an inline red warning.</li>"
+            "<li>When Google (Gemini) is selected, <b>API Settings</b> shows editable <b>RPD limit</b> and <b>RPD in use</b> fields for the selected connection profile and model. Set the limit to 0 to turn off the local meter. The main header keeps a compact status indicator; usage resets at midnight Pacific time while the limit is kept.</li>"
             "</ul>"
             "<p style='color: #9aa0ad;'><i>Actual token use and costs depend on the image, selected options, model, cache hit, account tier, and the price rows currently loaded.</i></p>"
             "<p><b>Developer console:</b> when debug logging is enabled, the API response may include text marked as thought and opaque signature metadata. These are diagnostics, not translation text, and are not written to the .TXT script.</p>"
@@ -124,12 +125,15 @@ class HelpSystem(QDialog):
             "<p>Each page in the <b>Project Assets</b> list reflects its exact processing state through color-coded vector icons:</p>"
             "<table border='0' cellpadding='6' width='100%'>"
             "<tr><td width='25%'><b style='color: #32323e;'>● Unassigned</b></td><td>Page has not yet been processed by the AI inference engine.</td></tr>"
-            "<tr><td><b style='color: #00d2ff;'>🔒 Waiting / Locked</b></td><td>Image is actively being processed or reviewed in the editor.</td></tr>"
+            "<tr><td><b style='color: #ffd600;'>⏳ Waiting</b></td><td>Page is queued and waiting for its turn to be sent to the provider.</td></tr>"
+            "<tr><td><b style='color: #00d2ff;'>🔒 Processing</b></td><td>The API is processing a page that had no existing translation text.</td></tr>"
+            "<tr><td><b style='color: #b388ff;'>🔄 Updating</b></td><td>The API is reprocessing a page that already has text. The existing result remains visible until the response arrives.</td></tr>"
             "<tr><td><b style='color: #00e676;'>✔ Ready</b></td><td>Dialogues successfully detected, translated, and structured.</td></tr>"
             "<tr><td><b style='color: #8faecf;'>💬 Silent (Empty)</b></td><td>Panel analyzed successfully with zero dialogues (action/scenery panel).</td></tr>"
-            "<tr><td><b style='color: #ffd600;'>⏳ Server Busy</b></td><td>Temporary network overload (503 / 429 / Read Timeout). Safe to retry later.</td></tr>"
+            "<tr><td><b style='color: #ff9800;'>⚠ Server Busy</b></td><td>The provider reported temporary overload or rate limiting (for example, HTTP 429 / 503). Retry after the provider allows it.</td></tr>"
             "<tr><td><b style='color: #ff3344;'>🛡️ Safety Blocked</b></td><td>Content moderation filter triggered. Switch LLM engine to proceed.</td></tr>"
-            "<tr><td><b style='color: #e000d0;'>◆ Modified</b></td><td>Page dialogues audited or synchronized into the target script file.</td></tr>"
+            "<tr><td><b style='color: #e000d0;'>◆ Modified</b></td><td>Dialogue text was edited locally in the studio and has not necessarily been exported.</td></tr>"
+            "<tr><td><b style='color: #00d2ff;'>▣ Script Synced</b></td><td>Dialogue text was loaded from a script or successfully written to the linked .TXT file.</td></tr>"
             "<tr><td><b style='color: #ff3d00;'>✖ Error</b></td><td>Unrecoverable client error, invalid API key, or corrupted payload.</td></tr>"
             "</table>"
         )
@@ -175,6 +179,39 @@ class HelpSystem(QDialog):
         tabs.addTab(tab_status, "Page Status")
         tabs.addTab(tab_script, "TXT Scripts")
         tabs.addTab(tab_batch, "Batch & API Pace")
+
+        # ==========================================
+        # TAB 7: PROJECT LINKS & CONTRIBUTION
+        # ==========================================
+        tab_contribute = QTextBrowser()
+        tab_contribute.setOpenExternalLinks(True)
+        tab_contribute.setHtml(
+            "<h3 style='color: #00d4ff;'>🤝 Project, Credits & Contributions</h3>"
+            "<p><b>Sibling project:</b> <a href='https://github.com/NeTRuNNeRGLiTCH/manga-cleaner'>Manga Cleaner Studio</a>. "
+            "The original project and base studio architecture were created by "
+            "<a href='https://github.com/NeTRuNNeRGLiTCH'>NeTRuNNeRGLiTCH</a>. "
+            "Manga Translate Studio is led and maintained by "
+            "<a href='https://github.com/santiagodvergara05-debug'>santiagodvergara05-debug</a>.</p>"
+            "<p><b>Repository:</b> <a href='https://github.com/santiagodvergara05-debug/manga-translate-studio'>"
+            "Manga Translate Studio on GitHub</a></p>"
+            "<p><b>Repository:</b> <a href='https://github.com/NeTRuNNeRGLiTCH/manga-cleaner'>"
+            "Manga Cleaner Studio on GitHub</a></p>"
+            "<h4>Report issues or contribute</h4>"
+            "<p>Use the repository's <a href='https://github.com/santiagodvergara05-debug/manga-translate-studio/issues'>Issues</a> "
+            "to report bugs or suggest improvements. You can open a "
+            "<a href='https://github.com/santiagodvergara05-debug/manga-translate-studio/pulls'>Pull Request (PR)</a> "
+            "to fix errors, add UI translations, improve prompts, or implement and document a provider integration.</p>"
+            "<h4>Provider availability</h4>"
+            "<p>OpenAI (ChatGPT), xAI (Grok), Anthropic (Claude), OpenRouter, and DeepSeek currently appear as integration scaffolds only. "
+            "They do not send API requests and cannot be saved as active providers yet. Each scaffold is connected to the shared "
+            "<code>BaseAIProvider</code> contract so contributors can implement it in its own provider module.</p>"
+            "<p>Each provider integration needs to be tested against that provider's API. Google (Gemini) is currently the only "
+            "integration the maintainer can test with available access. Contributors who can test or verify another provider's API "
+            "can help by submitting a PR with safe error handling, reported usage metadata, and setup notes.</p>"
+            "<p>Before opening a PR, review the repository's <a href='https://github.com/santiagodvergara05-debug/manga-translate-studio/blob/main/CONTRIBUTING.md'>"
+            "CONTRIBUTING.md</a> and keep credentials, prompts, and personal usage data out of commits.</p>"
+        )
+        tabs.addTab(tab_contribute, "Providers & Contribution")
 
         layout.addWidget(tabs)
 

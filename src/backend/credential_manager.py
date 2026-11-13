@@ -37,14 +37,12 @@ class CredentialManager:
             "request_pacing": "low",
             "gemini": {
                 "key": "",
-                "usage_profile": "",
                 "model": "gemini-3.1-flash-lite",
                 "thinking_level": "minimal",
                 "models_list": ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"]
             },
             "ollama": {
                 "lan_mode": True,
-                "usage_profile": "",
                 "url": "http://localhost:11434",
                 "token": "",
                 "model": "",
@@ -75,8 +73,7 @@ class CredentialManager:
                     for field in ("key", "token", "url", "model", "models_list")
                 ):
                     continue
-                saved_group = str(credentials.get("usage_profile", "")).strip()
-                name = saved_group or f"{provider_id.title()} (current)"
+                name = f"{provider_id.title()} (current)"
                 profile_id = f"legacy-{provider_id}"
                 profiles[profile_id] = {
                     "name": name,
@@ -114,9 +111,21 @@ class CredentialManager:
             self.data["active_connection_profile_id"] = active_id
             self.data["provider"] = provider_id
             if isinstance(credentials, dict):
+                if "usage_profile" in credentials:
+                    credentials.pop("usage_profile", None)
+                    changed = True
                 if self.data.get(provider_id) != credentials:
                     changed = True
                 self.data[provider_id] = copy.deepcopy(credentials)
+        for provider_id, credentials in self.data.items():
+            if isinstance(credentials, dict) and "usage_profile" in credentials:
+                credentials.pop("usage_profile", None)
+                changed = True
+        for profile in profiles.values():
+            credentials = profile.get("credentials") if isinstance(profile, dict) else None
+            if isinstance(credentials, dict) and "usage_profile" in credentials:
+                credentials.pop("usage_profile", None)
+                changed = True
         return changed
 
     def get_connection_profiles(self) -> dict:

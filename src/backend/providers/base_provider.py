@@ -152,3 +152,34 @@ class BaseAIProvider(ABC):
             b["id"] = idx
 
         return cleaned
+
+
+class ProviderScaffold(BaseAIProvider):
+    """Concrete placeholder for providers listed before their API integration exists.
+
+    Subclasses declare provider metadata only. They deliberately make no network
+    calls; maintainers should replace these methods when implementing an API.
+    """
+
+    is_available = False
+    default_models: list[str] = []
+
+    def test_and_fetch_models(self, key_or_url: str, auth_token: str = "") -> tuple[bool, list[str], str]:
+        return False, [], f"{self.display_name} is not available yet. See Help > Providers & Contribution for details."
+
+    def execute_translation(
+        self,
+        image_path: str,
+        prompt: str,
+        model: str,
+        api_key: str = "",
+        endpoint_url: str = "",
+        token: str = "",
+        thinking_level: str = "minimal",
+        system_prompt: str = "",
+    ) -> TranslationResult:
+        return TranslationResult(
+            status=ProviderStatus.ERROR,
+            message=f"{self.display_name} is not available yet. See Help > Providers & Contribution for details.",
+            raw_error="Provider integration scaffold has no request implementation.",
+        )

@@ -9,6 +9,7 @@ import os
 import re
 import cv2
 import time
+import html
 import numpy as np
 from enum import Enum, auto
 
@@ -16,10 +17,10 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
     QMessageBox, QGraphicsView, QProgressBar, QCheckBox, QDialog,
-    QLineEdit, QComboBox,
+    QComboBox,
 )
 from PySide6.QtCore import Qt, QTimer, QThread
-from PySide6.QtGui import QCloseEvent, QIntValidator
+from PySide6.QtGui import QCloseEvent
 
 from src.frontend.widgets import FileListWidget
 from src.frontend.canvas import MangaCanvas
@@ -27,7 +28,7 @@ from src.frontend.help_system import HelpSystem
 from src.utils.config import Config
 from src.utils.logger import logger
 from src.backend.translator import TranslatorPanel, TranslationScriptEngine
-from src.backend.ai_client import MultimodalTranslationWorker
+from src.backend.ai_client import AIClientManager, MultimodalTranslationWorker
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.frontend.project_reset import ProjectResetController
 from src.backend.usage_manager import UsageManager
@@ -40,7 +41,10 @@ class PageState(Enum):
     """Execution state tracking for imported chapter pages."""
     UNMODIFIED = auto()
     MODIFIED = auto()
+    SCRIPT_SYNCED = auto()
     WAITING = auto()
+    PROCESSING = auto()
+    UPDATING = auto()
     READY = auto()
     EMPTY = auto()
     SAFETY = auto()
@@ -61,7 +65,6 @@ class MainWindow(QMainWindow):
         self.resize(1420, 860)
 
         self.usage_manager = UsageManager()
-        self._rpd_view_key = None
         
         # Batch Processing Management (AI Inference Queue)
         self.worker_thread = None
@@ -70,6 +73,8 @@ class MainWindow(QMainWindow):
         self.is_paused = False
         self._active_batch_path = None
         self.batch_queue = []
+        self._batch_previous_states = {}
+        self._cancelled_pending_paths = []
         self.total_batch_tasks = 0
         self.completed_batch_tasks = 0
         self.failed_batch_tasks = []      # List of tuples: (filename, error_msg, full_path)
@@ -114,7 +119,7 @@ class MainWindow(QMainWindow):
         # /////////////////////////////////#
         self.nav = QFrame()
         self.nav.setObjectName("NavBar")
-        self.nav.setFixedHeight(55)
+        self.nav.setFixedHeight(88)
         nav_lay = QHBoxLayout(self.nav)
 
         title = QLabel(f"{Config.APP_NAME.upper()} {Config.VERSION}")
@@ -126,47 +131,46 @@ class MainWindow(QMainWindow):
         self.btn_reset.setFixedSize(65, 30)
         self.btn_reset.clicked.connect(self.on_project_reset_requested)
 
-        self.lbl_usage_summary = QLabel("AI USAGE: loading…")
-        self.lbl_usage_summary.setStyleSheet("color: #00d4ff; font-size: 10px; font-weight: bold;")
-        self.lbl_usage_summary.setMaximumWidth(350)
+        self.lbl_usage_summary = QLabel("Provider: loading…")
+        self.lbl_usage_summary.setTextFormat(Qt.RichText)
+        self.lbl_usage_summary.setStyleSheet("font-size: 10px; font-weight: bold;")
+        self.lbl_usage_summary.setMinimumWidth(300)
+        self.lbl_usage_summary.setMaximumWidth(370)
         self.lbl_usage_summary.setWordWrap(True)
+        self.header_info_card = QFrame()
+        self.header_info_card.setObjectName("HeaderInfoCard")
+        header_card_layout = QVBoxLayout(self.header_info_card)
+        header_card_layout.setContentsMargins(9, 5, 9, 5)
+        header_card_layout.addWidget(self.lbl_usage_summary)
 
+        # Keep the compact green quota status in the header; editable RPD values
+        # now live in API Settings alongside the selected Gemini connection.
+        self.lbl_rpd_status = QLabel()
+        self.lbl_rpd_status.setStyleSheet("color: #00e676; font-size: 9px; font-weight: bold;")
+        self.lbl_rpd_status.setMinimumWidth(105)
+        self.lbl_rpd_status.setMaximumWidth(125)
+        self.lbl_rpd_status.setAlignment(Qt.AlignCenter)
+        self.lbl_rpd_status.setToolTip("Gemini daily request usage and configured limit.")
+        self.lbl_rpd_status.setVisible(False)
+
+        pacing_tooltip = (
+            "Minimum delay between translation requests (tracked per provider):\n"
+            "Theoretical maximum request starts per minute from the configured minimum delay:\n"
+            "LOW: 4.1 seconds between requests — about 14.6 RPM maximum.\n"
+            "HIGH: 1.5 seconds between requests — 40 RPM maximum.\n"
+            "MAX: 0.5 seconds between requests — 120 RPM maximum.\n"
+            "MAX can trigger provider rate limits or HTTP 429 responses.\n"
+            "These are theoretical ceilings; API processing time can make the actual rate lower.\n"
+            "Applies to single-page and batch translations."
+        )
         self.request_pacing_combo = QComboBox()
         self.request_pacing_combo.addItem("LOW", "low")
         self.request_pacing_combo.addItem("HIGH", "high")
+        self.request_pacing_combo.addItem("MAX", "max")
         self.request_pacing_combo.setFixedWidth(78)
-        self.request_pacing_combo.setToolTip(
-            "LOW: at least 4.1 seconds between requests per provider (under 15 RPM). "
-            "HIGH: at least 1.5 seconds. Applies to single-page and batch translations."
-        )
-
-        self.rpd_panel = QWidget()
-        rpd_layout = QVBoxLayout(self.rpd_panel)
-        rpd_layout.setContentsMargins(0, 0, 0, 0)
-        rpd_layout.setSpacing(1)
-        rpd_fields = QHBoxLayout()
-        rpd_fields.setContentsMargins(0, 0, 0, 0)
-        rpd_fields.setSpacing(5)
-        self.txt_rpd_limit = QLineEdit("0")
-        self.txt_rpd_used = QLineEdit("0")
-        for field in (self.txt_rpd_limit, self.txt_rpd_used):
-            field.setValidator(QIntValidator(0, 2_147_483_647, field))
-            field.setFixedWidth(54)
-            field.setFixedHeight(22)
-            field.setAlignment(Qt.AlignCenter)
-            field.setFocusPolicy(Qt.ClickFocus)
-            field.setStyleSheet("background: #0b0b0e; border: 1px solid #333342; padding: 1px;")
-            field.editingFinished.connect(self._save_gemini_rpd_fields)
-            field.textChanged.connect(self._refresh_gemini_rpd_status)
-        rpd_fields.addWidget(QLabel("RPD limit"))
-        rpd_fields.addWidget(self.txt_rpd_limit)
-        rpd_fields.addWidget(QLabel("RPD in use"))
-        rpd_fields.addWidget(self.txt_rpd_used)
-        rpd_layout.addLayout(rpd_fields)
-        self.lbl_rpd_status = QLabel()
-        self.lbl_rpd_status.setStyleSheet("color: #00e676; font-size: 9px; font-weight: bold;")
-        rpd_layout.addWidget(self.lbl_rpd_status)
-        self.rpd_panel.setVisible(False)
+        self.request_pacing_combo.setToolTip(pacing_tooltip)
+        self.request_pacing_label = QLabel("API pace")
+        self.request_pacing_label.setToolTip(pacing_tooltip)
 
         self.btn_usage = QPushButton("USAGE / PRICES")
         self.btn_usage.setFixedHeight(30)
@@ -183,10 +187,10 @@ class MainWindow(QMainWindow):
 
         nav_lay.addWidget(title)
         nav_lay.addStretch()
-        nav_lay.addWidget(QLabel("API pace"))
+        nav_lay.addWidget(self.request_pacing_label)
         nav_lay.addWidget(self.request_pacing_combo)
-        nav_lay.addWidget(self.lbl_usage_summary)
-        nav_lay.addWidget(self.rpd_panel)
+        nav_lay.addWidget(self.header_info_card)
+        nav_lay.addWidget(self.lbl_rpd_status)
         nav_lay.addWidget(self.btn_usage)
         nav_lay.addSpacing(10)
         nav_lay.addWidget(btn_help)
@@ -331,6 +335,38 @@ class MainWindow(QMainWindow):
             and (path == self._active_batch_path or path in self.batch_queue)
         )
 
+    def page_has_existing_text(self, path: str) -> bool:
+        """Return whether a page already has dialogue text before a new inference run."""
+        panel = getattr(self, "translator_page", None)
+        if not path or panel is None:
+            return False
+        if path == self.current_img_path:
+            panel.save_current_page_editor()
+        bubbles = getattr(panel, "page_bubbles_data", {}).get(path, [])
+        if any(
+            str(item.get("direct") or item.get("final") or "").strip()
+            for item in bubbles if isinstance(item, dict)
+        ):
+            return True
+        return any(str(line).strip() for line in getattr(panel, "path_dialogues_map", {}).get(path, []))
+
+    def mark_page_inference_started(self, path: str):
+        """Show a lock for a fresh page or a distinct refresh icon for existing text."""
+        has_text = self.page_has_existing_text(path)
+        state_key = "updating" if has_text else "processing"
+        self.page_states[path] = PageState.UPDATING if has_text else PageState.PROCESSING
+        message = "Retranslating existing page text" if has_text else "Page is being processed by the API"
+        self.file_list.update_item_state(path, state_key, message)
+
+    def set_page_status(self, path: str, state_name: str):
+        """Synchronize an individual translation's terminal enum state with its list icon."""
+        try:
+            state = PageState[state_name.upper()]
+        except KeyError:
+            logger.warning(f"[PAGE STATUS] Unknown page state: {state_name}")
+            return
+        self.page_states[path] = state
+
     def _update_current_page_audit_lock(self):
         if hasattr(self, "translator_page") and self.is_batching:
             self.translator_page.set_page_audit_blocked(
@@ -375,6 +411,7 @@ class MainWindow(QMainWindow):
         self.is_paused = False
         
         # Clear remaining queued tasks immediately
+        self._cancelled_pending_paths = list(self.batch_queue)
         self.batch_queue.clear()
         
         self.btn_cancel_batch.setEnabled(False)
@@ -389,6 +426,9 @@ class MainWindow(QMainWindow):
         """Validates credentials, prepares the processing queue, and triggers execution."""
         if self.file_list.count() == 0:
             return
+
+        # Include unsaved edits on the currently visible page when classifying retranslation.
+        self.translator_page.save_current_page_editor()
 
         api_config = self.translator_page.get_active_api_config()
         if not api_config["has_credentials"]:
@@ -434,6 +474,11 @@ class MainWindow(QMainWindow):
                 it.setCheckState(Qt.Checked if it.data(Qt.UserRole) in marked else Qt.Unchecked)
 
         self.batch_queue = list(paths)
+        self._batch_previous_states = {
+            path: self.page_states.get(path, PageState.UNMODIFIED)
+            for path in self.batch_queue
+        }
+        self._cancelled_pending_paths = []
         self.total_batch_tasks = len(paths)
         self.completed_batch_tasks = 0
         self.failed_batch_tasks.clear()
@@ -482,8 +527,7 @@ class MainWindow(QMainWindow):
 
         target_path = self.batch_queue.pop(0)
         self._active_batch_path = target_path
-        self.page_states[target_path] = PageState.WAITING
-        self.file_list.update_item_state(target_path, "waiting", "Translating in progress...")
+        self.mark_page_inference_started(target_path)
         self._update_current_page_audit_lock()
 
         api_config = self.translator_page.get_active_api_config()
@@ -510,7 +554,7 @@ class MainWindow(QMainWindow):
             ollama_token=api_config["token"],
             thinking_level=api_config["thinking_level"],
             system_prompt=system_prompt,
-            usage_profile=api_config["usage_profile"],
+            connection_profile_id=api_config["connection_profile_id"],
             request_pacing=api_config["request_pacing"],
         )
         self.worker.moveToThread(self.worker_thread)
@@ -579,8 +623,9 @@ class MainWindow(QMainWindow):
 
         if path == self._active_batch_path:
             self._active_batch_path = None
-        if path == self.current_img_path:
+        if path == self.current_img_path and status in (ProviderStatus.SUCCESS, ProviderStatus.EMPTY):
             self.translator_page.populate_bubble_editor(result.bubbles)
+        if path == self.current_img_path:
             self._update_current_page_audit_lock()
 
         self.refresh_usage_summary()
@@ -646,6 +691,14 @@ class MainWindow(QMainWindow):
 
         pending = list(self.batch_queue)
         self.batch_queue.clear()
+        pending = list(dict.fromkeys(pending + self._cancelled_pending_paths))
+        self._cancelled_pending_paths = []
+        for path in pending:
+            previous_state = self._batch_previous_states.get(path, PageState.UNMODIFIED)
+            self.page_states[path] = previous_state
+            state_key = previous_state.name.lower()
+            self.file_list.update_item_state(path, state_key, f"Batch stopped before this page was sent · {state_key.title()}")
+        self._batch_previous_states.clear()
         successful_count = self.completed_batch_tasks - len(self.failed_batch_tasks)
         duration_suffix = (
             f" · {self._format_elapsed(self._last_job_duration)}"
@@ -736,7 +789,8 @@ class MainWindow(QMainWindow):
             self.translator_page.refresh_scripts_for_selected_series()
             
             for p in self.translator_page.path_dialogues_map.keys():
-                self.file_list.update_item_state(p, "modified", "Written into translation script")
+                self.page_states[p] = PageState.SCRIPT_SYNCED
+                self.file_list.update_item_state(p, "script_synced", "Written into translation script")
 
             QMessageBox.information(
                 self, 
@@ -774,7 +828,7 @@ class MainWindow(QMainWindow):
 
     def mark_current_modified(self):
         """Marks active page as modified when user manually changes dialogues."""
-        if self.current_img_path:
+        if self.current_img_path and not self.is_page_blocked_by_batch(self.current_img_path):
             if self.page_states.get(self.current_img_path) != PageState.MODIFIED:
                 self.page_states[self.current_img_path] = PageState.MODIFIED
                 self.file_list.update_item_state(self.current_img_path, "modified", "Locally modified")
@@ -852,15 +906,29 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def refresh_usage_summary(self):
-        """Refreshes provider, model, thinking state, and Gemini-only RPD controls."""
+        """Refresh the colored provider summary and Gemini's compact quota status."""
         if not hasattr(self, "translator_page"):
             return
         config = self.translator_page.get_active_api_config()
         provider = config["provider_id"]
         model = config["model"]
-        thinking = config.get("thinking_level", "").title() if provider == "gemini" else "N/A"
+        thinking = str(config.get("thinking_level", "")).strip().title()
+        thinking_available = (
+            provider == "gemini"
+            and bool(thinking)
+            and bool(AIClientManager.get_provider("gemini").supported_thinking_levels(model))
+        )
+        if not thinking_available:
+            thinking = "Not available"
+        provider_label = html.escape(str(config.get("provider_name") or provider.title()))
+        model_label = html.escape(str(model or "No model selected"))
+        thinking_label = html.escape(thinking)
+        thinking_color = "#00d4ff" if thinking_available else "#ff5252"
         self._header_info = (
-            f"{config['provider_name']} · {model or 'No model selected'} · Thinking: {thinking}"
+            f"<span style='color:#c1c1ce'>Provider:</span> <span style='color:#00d4ff'>{provider_label}</span><br>"
+            f"<span style='color:#c1c1ce'>Model:</span> <span style='color:#00d4ff'>{model_label}</span><br>"
+            f"<span style='color:#c1c1ce'>Thinking:</span> "
+            f"<span style='color:{thinking_color}'>{thinking_label}</span>"
         )
         if not config["has_credentials"] and self._job_started_at is None:
             self._request_status = "Credentials needed"
@@ -869,19 +937,12 @@ class MainWindow(QMainWindow):
         self._update_elapsed_display()
         self.lbl_usage_summary.setToolTip(
             f"Request pacing: {config['request_pacing'].upper()}. "
-            "Provider, model, and thinking level are read from the active API settings."
+            "Provider, model, and thinking level come from the active API settings."
         )
-        self.rpd_panel.setVisible(provider == "gemini")
+        self.lbl_rpd_status.setVisible(provider == "gemini" and bool(model))
         if provider == "gemini" and model:
-            state = self.usage_manager.get_gemini_rpd(config["usage_profile"], model)
-            view_key = (config["usage_profile"], model, state["date"])
-            period_or_model_changed = view_key != self._rpd_view_key
-            self._rpd_view_key = view_key
-            if period_or_model_changed or not self.txt_rpd_limit.hasFocus():
-                self.txt_rpd_limit.setText(str(state["limit"]))
-            if period_or_model_changed or not self.txt_rpd_used.hasFocus():
-                self.txt_rpd_used.setText(str(state["used"]))
-            self._refresh_gemini_rpd_status()
+            state = self.usage_manager.get_gemini_rpd(config["connection_profile_id"], model)
+            self._refresh_gemini_rpd_status(state["limit"], state["used"])
 
     @staticmethod
     def _format_elapsed(seconds: float) -> str:
@@ -901,11 +962,18 @@ class MainWindow(QMainWindow):
                 self.translator_page.update_inference_elapsed(elapsed_text)
         elif self._last_job_duration is not None:
             activity = f"{self._request_status} · {self._format_elapsed(self._last_job_duration)}"
-            if hasattr(self, "translator_page"):
-                self.translator_page.update_inference_elapsed(self._format_elapsed(self._last_job_duration), finished=True)
         else:
             activity = self._request_status
-        self.lbl_usage_summary.setText(f"{self._header_info} · {activity}")
+        activity_color = "#ff5252"
+        activity_lower = activity.lower()
+        if any(word in activity_lower for word in ("ready", "complete", "success")):
+            activity_color = "#00e676"
+        elif any(word in activity_lower for word in ("working", "waiting", "stopping")):
+            activity_color = "#00d4ff"
+        self.lbl_usage_summary.setText(
+            f"{self._header_info}<br>"
+            f"<span style='color:{activity_color}'>Status: {html.escape(activity)}</span>"
+        )
 
     def _start_timed_job(self, status: str = "Waiting to send"):
         self.elapsed_timer.stop()
@@ -918,9 +986,12 @@ class MainWindow(QMainWindow):
         if self._job_started_at is None:
             self._job_started_at = time.monotonic()
             self._last_job_duration = None
-            self._request_status = "Working"
             self.elapsed_timer.start()
-            self._update_elapsed_display()
+        # Each batch page changes the state back to "Waiting to send". Always
+        # switch to the in-flight state when its paced request actually starts,
+        # even while the batch-wide elapsed timer is already running.
+        self._request_status = "Working — waiting for API response"
+        self._update_elapsed_display()
 
     def _finish_timed_job(self, status: str):
         if self._job_started_at is not None:
@@ -939,49 +1010,19 @@ class MainWindow(QMainWindow):
         self.translator_page.cred_manager.save({"request_pacing": mode})
         self.refresh_usage_summary()
 
-    def _rpd_field_value(self, field: QLineEdit) -> int:
-        text = field.text().strip()
-        if not text:
-            return 0
-        return int(text)
-
-    def _refresh_gemini_rpd_status(self, *_):
-        if not hasattr(self, "lbl_rpd_status"):
-            return
-        try:
-            limit = self._rpd_field_value(self.txt_rpd_limit)
-            used = self._rpd_field_value(self.txt_rpd_used)
-        except ValueError:
-            self.lbl_rpd_status.setText("Enter whole numbers only.")
-            self.lbl_rpd_status.setStyleSheet("color: #ff5252; font-size: 9px; font-weight: bold;")
-            return
+    def _refresh_gemini_rpd_status(self, limit: int, used: int):
+        """Show the Gemini meter state without exposing editable fields in the header."""
         if limit > 0 and used > limit:
-            text = f"RPD limit exceeded: {used} / {limit}"
+            text = f"RPD: {used} / {limit}"
             color = "#ff5252"
         elif limit == 0:
-            text = "RPD tracking off (limit is 0)"
+            text = f"RPD: {used} / 0"
             color = "#a0a0ad"
         else:
-            text = f"RPD within limit: {used} / {limit}"
+            text = f"RPD: {used} / {limit}"
             color = "#00e676"
         self.lbl_rpd_status.setText(text)
         self.lbl_rpd_status.setStyleSheet(f"color: {color}; font-size: 9px; font-weight: bold;")
-
-    def _save_gemini_rpd_fields(self):
-        config = self.translator_page.get_active_api_config()
-        if config["provider_id"] != "gemini" or not config["model"]:
-            return
-        try:
-            limit = self._rpd_field_value(self.txt_rpd_limit)
-            used = self._rpd_field_value(self.txt_rpd_used)
-            self.usage_manager.set_gemini_rpd(
-                config["usage_profile"], config["model"], limit, used
-            )
-        except (ValueError, OSError) as exc:
-            self.lbl_rpd_status.setText(f"Could not save RPD values: {exc}")
-            self.lbl_rpd_status.setStyleSheet("color: #ff5252; font-size: 9px; font-weight: bold;")
-            return
-        self._refresh_gemini_rpd_status()
 
     def open_usage_pricing(self):
         """Opens editable price tables and request history."""
@@ -990,8 +1031,13 @@ class MainWindow(QMainWindow):
             self.usage_manager,
             config["provider_id"],
             config["model"],
-            config["usage_profile"],
+            config["connection_profile_id"],
             self,
+            connection_profile_name=config["connection_profile_name"],
+            connection_profiles={
+                profile_id: str(profile.get("name") or "Unnamed connection")
+                for profile_id, profile in self.translator_page.cred_manager.get_connection_profiles().items()
+            },
         )
         if dialog.exec() == QDialog.Accepted:
             self.refresh_usage_summary()

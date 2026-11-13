@@ -24,7 +24,6 @@ from src.backend.prompt_manager import PromptManager
 from src.backend.credential_manager import CredentialManager
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.backend.ai_client import MultimodalTranslationWorker, AIClientManager
-from src.backend.usage_manager import UsageManager
 from src.backend.providers.gemini_provider import GeminiProvider
 from src.frontend.api_settings import APISettingsDialog
 from src.backend.languages import (
@@ -199,17 +198,28 @@ class RulesDialog(QDialog):
 
         tab_options = QWidget()
         lay_o = QVBoxLayout(tab_options)
+        options_scroll = QScrollArea()
+        options_scroll.setWidgetResizable(True)
+        options_scroll.setFrameShape(QFrame.NoFrame)
+        options_content = QWidget()
+        options_content.setMinimumWidth(0)
+        options_layout = QVBoxLayout(options_content)
+        options_layout.setContentsMargins(10, 8, 10, 8)
+        options_layout.setSpacing(6)
+        options_scroll.setWidget(options_content)
+        lay_o.addWidget(options_scroll)
         lbl_o = QLabel(
             "Choose which content and optional output fields the model should generate. "
             "Token arrows show possible impact, not a fixed estimate."
         )
         lbl_o.setWordWrap(True)
         lbl_o.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 11px;")
-        lay_o.addWidget(lbl_o)
+        options_layout.addWidget(lbl_o)
 
         option_specs = [
             ("sfx", "Sound effects and onomatopoeias", "Extract and translate comic sound lettering. ⬆ More output if found · ⬇ off saves those items."),
             ("sfx_meaning", "Explain sound-effect meaning", "Adds a concise meaning note to SFX cards in the selected target language. ⬆ Extra output for SFX only · requires SFX."),
+            ("deduplicate_sfx", "Skip identical repeated sound effects", "Return an exact repeated SFX lettering only once per page. ⬇ Can reduce duplicate output · requires SFX."),
             ("narration", "Narration boxes and captions", "Include narration outside speech bubbles. ⬆ More output if found · ⬇ off saves those items."),
             ("outside", "Floating outside text", "Include signs, labels, and other text outside bubbles. ⬆ More output if found · ⬇ off saves those items."),
             ("variants", "Translation variants", "⬆ Formal, aggressive, and natural alternatives can add output tokens. Disable for direct translation only."),
@@ -217,19 +227,48 @@ class RulesDialog(QDialog):
             ("r19_mode", "R19 vocalization mode", "Adds contextual rules for distinguishing breathy vocalizations from laughter. ⬆ Small prompt increase; no extra output fields."),
         ]
         self.option_checks = {}
-        for key, title, description in option_specs:
+
+        def add_option(target_layout, key, title, description):
             checkbox = QCheckBox(title)
             checkbox.setChecked(bool(option_values.get(key, True)))
             checkbox.setStyleSheet("font-size: 11px; font-weight: bold;")
             detail = QLabel(description)
             detail.setWordWrap(True)
             detail.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px; margin-left: 22px;")
-            lay_o.addWidget(checkbox)
-            lay_o.addWidget(detail)
+            target_layout.addWidget(checkbox)
+            target_layout.addWidget(detail)
             self.option_checks[key] = checkbox
             checkbox.toggled.connect(self._update_prompt_preview)
-        self.option_checks["sfx"].toggled.connect(self._sync_sfx_meaning_option)
-        self._sync_sfx_meaning_option(self.option_checks["sfx"].isChecked())
+
+        add_option(options_layout, *option_specs[0])
+
+        # Draw the SFX-only settings as child branches so their dependency is visible.
+        dependent_options = QWidget()
+        dependent_layout = QVBoxLayout(dependent_options)
+        dependent_layout.setContentsMargins(24, 0, 0, 0)
+        dependent_layout.setSpacing(4)
+        for index, (key, title, description) in enumerate(option_specs[1:3]):
+            branch_row = QHBoxLayout()
+            branch_row.setContentsMargins(0, 0, 0, 0)
+            branch_row.setSpacing(8)
+            connector = QLabel("└─" if index == 1 else "├─")
+            connector.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-family: Consolas, monospace;")
+            branch_row.addWidget(connector, 0, Qt.AlignmentFlag.AlignTop)
+            branch_content = QVBoxLayout()
+            branch_content.setContentsMargins(0, 0, 0, 0)
+            branch_content.setSpacing(2)
+            branch_row.addLayout(branch_content, 1)
+            dependent_layout.addLayout(branch_row)
+            add_option(branch_content, key, title, description)
+        options_layout.addWidget(dependent_options)
+        self.sfx_dependent_options = dependent_options
+
+        for key, title, description in option_specs[3:]:
+            add_option(options_layout, key, title, description)
+
+        options_layout.addStretch(1)
+        self.option_checks["sfx"].toggled.connect(self._sync_sfx_dependent_options)
+        self._sync_sfx_dependent_options(self.option_checks["sfx"].isChecked())
         self.tabs.addTab(tab_user, "User Rules (Tone & Lore)")
         self.tabs.addTab(tab_prompt, "System Prompt (Read-only)")
         self.tabs.addTab(tab_options, "Extraction Options")
@@ -258,12 +297,16 @@ class RulesDialog(QDialog):
     def _current_options(self) -> dict:
         return {key: checkbox.isChecked() for key, checkbox in self.option_checks.items()}
 
-    def _sync_sfx_meaning_option(self, sfx_enabled: bool):
-        """Locks the dependent meaning option when SFX extraction is disabled."""
+    def _sync_sfx_dependent_options(self, sfx_enabled: bool):
+        """Locks SFX-specific options when SFX extraction is disabled."""
         meaning_checkbox = self.option_checks["sfx_meaning"]
+        deduplicate_checkbox = self.option_checks["deduplicate_sfx"]
+        self.sfx_dependent_options.setEnabled(sfx_enabled)
         if not sfx_enabled:
             meaning_checkbox.setChecked(False)
+            deduplicate_checkbox.setChecked(False)
         meaning_checkbox.setEnabled(sfx_enabled)
+        deduplicate_checkbox.setEnabled(sfx_enabled)
         meaning_checkbox.setToolTip(
             "Enable Sound effects and onomatopoeias first."
             if not sfx_enabled else
@@ -550,6 +593,7 @@ class TranslatorPanel(QWidget):
             "is_lan": is_lan,
             "thinking_level": str(creds.get("thinking_level", "minimal")).lower(),
             "request_pacing": str(self.cred_manager.data.get("request_pacing", "low")).lower(),
+            "connection_profile_id": self.cred_manager.get_active_connection_profile_id() or f"legacy-{provider_id}",
         }
         if requires_endpoint:
             config["endpoint_url"] = (
@@ -561,13 +605,9 @@ class TranslatorPanel(QWidget):
         else:
             config["api_key"] = str(creds.get("key", "")).strip()
             config["has_credentials"] = bool(config["api_key"])
-        config["usage_profile"] = UsageManager.make_profile_id(
-            provider_id,
-            explicit_name=creds.get("usage_profile", ""),
-            api_key=config["api_key"],
-            endpoint=config["endpoint_url"],
-            token=config["token"],
-        )
+        saved_profiles = self.cred_manager.get_connection_profiles()
+        active_profile = saved_profiles.get(config["connection_profile_id"], {})
+        config["connection_profile_name"] = str(active_profile.get("name") or "Legacy / unassigned")
         return config
 
     def _refresh_api_summary(self):
@@ -861,7 +901,7 @@ class TranslatorPanel(QWidget):
             self.lbl_api_status.setStyleSheet("color: #00d2ff; font-size: 10px; font-weight: bold; padding: 2px;")
             self.lbl_api_status.setVisible(True)
             if self.mw.current_img_path and not allow_audit:
-                self.mw.file_list.update_item_state(self.mw.current_img_path, "lock", "Translating in progress...")
+                self.mw.mark_page_inference_started(self.mw.current_img_path)
 
     def set_page_audit_blocked(self, blocked: bool):
         """Block edits while keeping the dialogue list scrollable during a batch."""
@@ -893,13 +933,14 @@ class TranslatorPanel(QWidget):
         )
         self.lbl_api_status.setVisible(True)
 
-    def update_inference_elapsed(self, elapsed: str, finished: bool = False):
+    def update_inference_elapsed(self, elapsed: str):
         """Shows elapsed time in the request status line, without repeating model settings."""
         progress = getattr(self, "_inference_progress", "⏳ Model working")
         self.lbl_api_status.setText(f"{progress} · {elapsed}")
         self.lbl_api_status.setVisible(True)
 
     def _set_result_status(self, message: str, color: str):
+        self._inference_progress = None
         duration = getattr(self.mw, "_last_job_duration", None)
         if duration is not None:
             message = f"{message} · {self.mw._format_elapsed(duration)}"
@@ -910,6 +951,7 @@ class TranslatorPanel(QWidget):
         self.lbl_api_status.setVisible(True)
 
     def show_status_message(self, message: str, color: str = "#00d2ff"):
+        self._inference_progress = None
         self.lbl_api_status.setText(message)
         self.lbl_api_status.setStyleSheet(
             f"color: {color}; font-size: 10px; font-weight: bold; padding: 2px;"
@@ -1079,6 +1121,12 @@ class TranslatorPanel(QWidget):
             if path in self.page_bubbles_data:
                 self.page_bubbles_data[path] = []
 
+    def on_editor_content_changed(self, *_):
+        """Persist a user edit and update the page's local-modification status."""
+        self.save_current_page_editor()
+        if hasattr(self.mw, "mark_current_modified"):
+            self.mw.mark_current_modified()
+
     def translate_current_page(self):
         """Dispatches an asynchronous single-page multimodal translation request."""
         if not self.mw.current_img_path or not os.path.exists(self.mw.current_img_path):
@@ -1095,6 +1143,7 @@ class TranslatorPanel(QWidget):
             return
 
         request_path = self.mw.current_img_path
+        self.save_current_page_editor()
         self.pending_language_pairs[request_path] = self.current_language_pair()
         system_prompt, request_prompt = self.build_request_prompts(request_path)
         estimate_prompt = f"{system_prompt}\n\n{request_prompt}"
@@ -1114,7 +1163,7 @@ class TranslatorPanel(QWidget):
             ollama_token=api_config["token"],
             thinking_level=api_config["thinking_level"],
             system_prompt=system_prompt,
-            usage_profile=api_config["usage_profile"],
+            connection_profile_id=api_config["connection_profile_id"],
             request_pacing=api_config["request_pacing"],
         )
         self.active_worker.finished.connect(self._on_translation_success)
@@ -1141,6 +1190,7 @@ class TranslatorPanel(QWidget):
 
         if status == ProviderStatus.SAFETY_BLOCKED:
             self._set_result_status("🛡 Blocked by Content Moderation", "#ff3344")
+            self.mw.set_page_status(path, "safety")
             self.mw.file_list.update_item_state(path, "safety", result.message)
             QMessageBox.warning(
                 self,
@@ -1154,12 +1204,14 @@ class TranslatorPanel(QWidget):
 
         if status == ProviderStatus.SERVER_BUSY:
             self._set_result_status("⏳ Provider Busy / Overloaded", "#ffd600")
+            self.mw.set_page_status(path, "busy")
             self.mw.file_list.update_item_state(path, "busy", result.message)
             QMessageBox.warning(self, "Server Busy", f"{result.message}\n\nPlease retry in a couple of minutes.")
             return
 
         if status == ProviderStatus.EMPTY:
             self._set_result_status("💬 Silent Page (No text detected)", "#8faecf")
+            self.mw.set_page_status(path, "empty")
             self.page_bubbles_data[path] = []
             self.page_language_pairs.pop(path, None)
             self.path_dialogues_map.pop(path, None)
@@ -1169,6 +1221,7 @@ class TranslatorPanel(QWidget):
 
         if status == ProviderStatus.ERROR:
             self._set_result_status("✖ Translation error", "#ff5252")
+            self.mw.set_page_status(path, "error")
             self.mw.file_list.update_item_state(path, "error", result.message or "Translation failed")
             QMessageBox.critical(self, "Translation Error", f"Failed to translate {fname}:\n{result.message}")
             return
@@ -1177,6 +1230,7 @@ class TranslatorPanel(QWidget):
         self.page_language_pairs[path] = request_language_pair or self.current_language_pair()
         self._set_result_status("✔ Translation generated successfully", "#00e676")
 
+        self.mw.set_page_status(path, "ready")
         self.page_bubbles_data[path] = result.bubbles
         self.path_dialogues_map[path] = [b.get("direct") for b in result.bubbles if b.get("direct")]
         self.mw.file_list.update_item_state(path, "ready", f"Translated ({len(result.bubbles)} dialogues)")
@@ -1191,6 +1245,7 @@ class TranslatorPanel(QWidget):
             self.mw._finish_timed_job("Failed")
         self.pending_language_pairs.pop(path, None)
         self._set_result_status("✖ Translation failed", "#ff5252")
+        self.mw.set_page_status(path, "error")
         self.mw.file_list.update_item_state(path, "error", error_msg[:60])
         QMessageBox.critical(self, "Translation Error", f"Failed to translate {os.path.basename(path)}:\n{error_msg}")
 
@@ -1209,14 +1264,14 @@ class TranslatorPanel(QWidget):
             "translations": [""]
         }
         self._create_bubble_card(new_bubble_data)
-        self.save_current_page_editor()
+        self.on_editor_content_changed()
 
     def _remove_bubble_card(self, card_widget):
         """Removes a dialogue card widget and refreshes cached dialogue lines."""
         if card_widget in self.current_bubbles_widgets:
             self.current_bubbles_widgets.remove(card_widget)
             card_widget.deleteLater()
-            self.save_current_page_editor()
+            self.on_editor_content_changed()
 
     def _create_bubble_card(self, b: dict):
         """Builds an interactive dialogue card with variant selectors and editable text fields."""
@@ -1257,7 +1312,7 @@ class TranslatorPanel(QWidget):
         orig_edit.setPlaceholderText("Transcribed original text...")
         orig_edit.setText(b.get("original", "").strip())
         orig_edit.setStyleSheet("background: #15151b; border: 1px solid #2e2e3a; color: #cccccc; font-size: 10px; padding: 2px 4px;")
-        orig_edit.textChanged.connect(self.save_current_page_editor)
+        orig_edit.textChanged.connect(self.on_editor_content_changed)
         
         card_lay.addWidget(lbl_orig_tag)
         card_lay.addWidget(orig_edit)
@@ -1321,7 +1376,7 @@ class TranslatorPanel(QWidget):
             combo.blockSignals(False)
 
         combo.currentIndexChanged.connect(lambda idx, c=combo, le=line_edit: le.setText(c.currentData()))
-        line_edit.textChanged.connect(self.save_current_page_editor)
+        line_edit.textChanged.connect(self.on_editor_content_changed)
 
         if options_dict:
             card_lay.addWidget(combo)
@@ -1470,7 +1525,8 @@ class TranslatorPanel(QWidget):
                 self.page_bubbles_data.pop(p, None)
                 self.page_token_usage.pop(p, None)
                 self.page_language_pairs.pop(p, None)
-                self.mw.file_list.update_item_state(p, "modified", "Imported from script")
+                self.mw.set_page_status(p, "script_synced")
+                self.mw.file_list.update_item_state(p, "script_synced", "Loaded from translation script")
 
             self.lbl_script_status.setText(f"Loaded: {os.path.basename(open_path)}")
             if self.mw.current_img_path:

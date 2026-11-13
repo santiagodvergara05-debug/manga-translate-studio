@@ -33,8 +33,28 @@ class ProjectResetController:
         """
         mw = main_window
 
-        # Prevent reset execution if background inference or batch queue is active
-        if getattr(mw, "worker_thread", None) is not None or getattr(mw, "is_batching", False):
+        translator = getattr(mw, "translator_page", None)
+        workers = (
+            getattr(mw, "worker_thread", None),
+            getattr(translator, "active_worker", None),
+        )
+        worker_active = False
+        for worker in workers:
+            if worker is None:
+                continue
+            try:
+                worker_active = worker_active or worker.isRunning()
+            except RuntimeError:
+                # Qt may delete a finished QThread while Python still has a stale
+                # wrapper reference. Ignore that stale reference only.
+                continue
+
+        # Do not clear objects still in use by an inference worker.
+        if (
+            worker_active
+            or getattr(mw, "is_batching", False)
+            or getattr(mw, "_job_started_at", None) is not None
+        ):
             QMessageBox.warning(
                 mw,
                 "Studio Busy",
@@ -43,7 +63,6 @@ class ProjectResetController:
             )
             return False
 
-        translator = getattr(mw, "translator_page", None)
         canvas = getattr(mw, "canvas", None)
 
         has_project_data = bool(
@@ -53,6 +72,10 @@ class ProjectResetController:
             or (translator and getattr(translator, "loaded_script_path", None))
             or (translator and getattr(translator, "path_dialogues_map", {}))
             or (translator and getattr(translator, "page_bubbles_data", {}))
+            or getattr(mw, "_request_status", "Ready") != "Ready"
+            or getattr(mw, "_last_job_duration", None) is not None
+            or (translator and getattr(translator, "lbl_api_status", None)
+                and translator.lbl_api_status.isVisible())
         )
 
         has_canvas_img = bool(canvas is not None and getattr(canvas, "cv_img", None) is not None)
@@ -75,6 +98,16 @@ class ProjectResetController:
         # Decouple active path before resetting UI to avoid signal recursion
         mw.current_img_path = None
 
+        # Stop the batch/request timer before hiding the translator status;
+        # otherwise a later timer tick can make the stale status visible again.
+        elapsed_timer = getattr(mw, "elapsed_timer", None)
+        if elapsed_timer is not None:
+            elapsed_timer.stop()
+        mw._job_started_at = None
+        mw._last_job_duration = None
+        mw._request_status = "Ready"
+        mw._active_batch_path = None
+
         # Clear internal image sessions and queue tracking collections
         if hasattr(mw, "image_sessions"):
             mw.image_sessions.clear()
@@ -86,6 +119,7 @@ class ProjectResetController:
             mw.failed_batch_tasks.clear()
 
         mw.is_batching = False
+        mw.is_paused = False
         mw.total_batch_tasks = 0
         mw.completed_batch_tasks = 0
         mw.stop_requested = False
@@ -121,6 +155,7 @@ class ProjectResetController:
         # Reset translation workspace data and dialogue cards
         if translator is not None:
             translator.loaded_script_path = None
+            translator.active_worker = None
             translator.path_dialogues_map.clear()
             translator.page_bubbles_data.clear()
             if hasattr(translator, "page_language_pairs"):
@@ -141,7 +176,15 @@ class ProjectResetController:
                 translator.refresh_series_folders()
 
             if hasattr(translator, "lbl_api_status"):
+                translator.lbl_api_status.clear()
                 translator.lbl_api_status.setVisible(False)
+            if hasattr(translator, "_inference_progress"):
+                translator._inference_progress = ""
+
+            if hasattr(translator, "set_locked"):
+                translator.set_locked(False)
+            if hasattr(translator, "set_page_audit_blocked"):
+                translator.set_page_audit_blocked(False)
 
             if hasattr(translator, "update_token_estimate"):
                 translator.update_token_estimate()
@@ -166,6 +209,8 @@ class ProjectResetController:
 
         try:
             mw.refresh_usage_summary()
+            if hasattr(mw, "_update_elapsed_display"):
+                mw._update_elapsed_display()
         except Exception as exc:
             logger.debug(f"[RESET] Usage summary refresh skipped: {exc}")
 

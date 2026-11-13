@@ -15,6 +15,11 @@ from src.backend.providers.base_provider import (
 )
 from src.backend.providers.gemini_provider import GeminiProvider
 from src.backend.providers.ollama_provider import OllamaProvider
+from src.backend.providers.openai_provider import OpenAIProvider
+from src.backend.providers.xai_provider import XAIProvider
+from src.backend.providers.anthropic_provider import AnthropicProvider
+from src.backend.providers.openrouter_provider import OpenRouterProvider
+from src.backend.providers.deepseek_provider import DeepSeekProvider
 from src.backend.usage_manager import UsageManager
 
 DEBUG_AI_LOGS = (not getattr(sys, "frozen", False)) and os.environ.get("MTS_DEBUG", "1") == "1"
@@ -25,7 +30,7 @@ class RequestPacer:
 
     _lock = threading.Lock()
     _last_request_by_provider = {}
-    _intervals = {"low": 4.1, "high": 1.5}
+    _intervals = {"low": 4.1, "high": 1.5, "max": 0.5}
 
     @classmethod
     def wait(cls, provider: str, mode: str = "low"):
@@ -44,6 +49,12 @@ class RequestPacer:
 PROVIDERS: dict[str, BaseAIProvider] = {
     "gemini": GeminiProvider(),
     "ollama": OllamaProvider(),
+    # These scaffolds intentionally fail closed until maintainers implement APIs.
+    "openai": OpenAIProvider(),
+    "xai": XAIProvider(),
+    "anthropic": AnthropicProvider(),
+    "openrouter": OpenRouterProvider(),
+    "deepseek": DeepSeekProvider(),
 }
 
 
@@ -140,7 +151,7 @@ class AIClientManager:
         token: str,
         thinking_level: str = "minimal",
         system_prompt: str = "",
-        usage_profile: str = "",
+        connection_profile_id: str = "",
         request_pacing: str = "low",
         request_started_callback=None,
     ) -> TranslationResult:
@@ -174,11 +185,15 @@ class AIClientManager:
             )
         except DailyQuotaExceeded as exc:
             UsageManager().record_usage(
-                provider, model, {"request_count": exc.request_count}, profile_id=usage_profile
+                provider, model, {"request_count": exc.request_count},
+                connection_profile_id=connection_profile_id,
             )
             raise
 
-        cost = UsageManager().record_usage(provider, model, result.usage, profile_id=usage_profile)
+        cost = UsageManager().record_usage(
+            provider, model, result.usage,
+            connection_profile_id=connection_profile_id,
+        )
         if cost is not None:
             result.usage["cost_usd"] = cost
 
@@ -218,7 +233,7 @@ class MultimodalTranslationWorker(QThread):
         ollama_token: str = "",
         thinking_level: str = "minimal",
         system_prompt: str = "",
-        usage_profile: str = "",
+        connection_profile_id: str = "",
         request_pacing: str = "low",
     ):
         super().__init__()
@@ -231,7 +246,7 @@ class MultimodalTranslationWorker(QThread):
         self.ollama_token = ollama_token
         self.thinking_level = thinking_level
         self.system_prompt = system_prompt
-        self.usage_profile = usage_profile
+        self.connection_profile_id = connection_profile_id
         self.request_pacing = request_pacing
 
     def run(self):
@@ -246,7 +261,7 @@ class MultimodalTranslationWorker(QThread):
                 token=self.ollama_token,
                 thinking_level=self.thinking_level,
                 system_prompt=self.system_prompt,
-                usage_profile=self.usage_profile,
+                connection_profile_id=self.connection_profile_id,
                 request_pacing=self.request_pacing,
                 request_started_callback=self.request_started.emit,
             )

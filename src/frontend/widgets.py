@@ -18,14 +18,17 @@ from src.utils.logger import logger
 # Mapping between application state keys and actual filenames inside assets/
 ASSET_ICON_MAP = {
     "unmodified": "icon_unassigned_1.svg",
-    "waiting": "icon_busy.svg",
+    "waiting": "icon_waiting.svg",
+    "processing": "icon_lock.svg",
+    "updating": "icon_updating.svg",
     "ready": "icon_ready.svg",
     "empty": "icon_empty.svg",
     "busy": "icon_busy.svg",
     "safety": "icon_safety.svg",
     "modified": "icon_modified.svg",
+    "script_synced": "icon_script_synced.svg",
     "error": "icon_error.svg",
-    "lock": "icon_lock.svg"
+    "lock": "icon_lock.svg",
 }
 
 

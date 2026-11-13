@@ -13,6 +13,17 @@ QMainWindow, QWidget {
     border-bottom: 1px solid #1c1c22;
 }
 
+#HeaderInfoCard {
+    background-color: #17171d;
+    border: 1px solid #292932;
+    border-radius: 4px;
+}
+
+#HeaderInfoCard QLabel {
+    background-color: transparent;
+    border: none;
+}
+
 #SidePanel {
     background-color: #0f0f13;
     border: 1px solid #1c1c22;

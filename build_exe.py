@@ -40,6 +40,11 @@ def build():
         "--hidden-import=numpy",
         "--hidden-import=src.backend.providers.gemini_provider",
         "--hidden-import=src.backend.providers.ollama_provider",
+        "--hidden-import=src.backend.providers.openai_provider",
+        "--hidden-import=src.backend.providers.xai_provider",
+        "--hidden-import=src.backend.providers.anthropic_provider",
+        "--hidden-import=src.backend.providers.openrouter_provider",
+        "--hidden-import=src.backend.providers.deepseek_provider",
         "--hidden-import=src.backend.credential_manager",
         "--hidden-import=src.backend.prompt_manager",
         "main.py"

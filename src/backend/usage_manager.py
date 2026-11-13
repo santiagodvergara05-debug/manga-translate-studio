@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import math
 import os
 import tempfile
 import threading
+import copy
 from datetime import date, datetime, timedelta, timezone
 
 from src.utils.paths import Paths
@@ -39,6 +39,25 @@ class UsageManager:
     def __init__(self):
         self.tables_path = os.path.join(Paths.CACHE, "pricing_tables.json")
         self.history_path = os.path.join(Paths.CACHE, "usage_history.json")
+        # UI refreshes query the same files repeatedly. Keep parsed JSON in memory
+        # and reload only when another operation changes the file on disk.
+        self._json_cache: dict[str, tuple[tuple[int, int], object]] = {}
+
+    def _read_cached_json(self, path: str, default):
+        """Read JSON once per on-disk version, using mtime and size for invalidation."""
+        try:
+            stat = os.stat(path)
+            signature = (stat.st_mtime_ns, stat.st_size)
+            cached = self._json_cache.get(path)
+            if cached and cached[0] == signature:
+                return cached[1]
+            with open(path, "r", encoding="utf-8") as stream:
+                data = json.load(stream)
+            self._json_cache[path] = (signature, data)
+            return data
+        except (FileNotFoundError, OSError, json.JSONDecodeError):
+            self._json_cache.pop(path, None)
+            return default
 
     @staticmethod
     def _atomic_json_write(path: str, data):
@@ -53,12 +72,11 @@ class UsageManager:
                 os.remove(temporary_path)
 
     def load_tables(self) -> dict:
-        data = json.loads(json.dumps(DEFAULT_TABLES))
+        data = copy.deepcopy(DEFAULT_TABLES)
         needs_migration = False
         saved_version = 1
         try:
-            with open(self.tables_path, "r", encoding="utf-8") as stream:
-                saved = json.load(stream)
+            saved = self._read_cached_json(self.tables_path, {})
             if isinstance(saved, dict):
                 saved_version = int(saved.get("version", 1) or 1)
                 if isinstance(saved.get("prices"), list):
@@ -92,6 +110,7 @@ class UsageManager:
         }
         with self._lock:
             self._atomic_json_write(self.tables_path, cleaned)
+            self._json_cache.pop(self.tables_path, None)
 
     def save_prices(self, prices: list[dict]):
         """Update price rows without overwriting RPD counters written by background requests."""
@@ -202,32 +221,12 @@ class UsageManager:
             + (output_tokens * output_rate)
         ) / 1_000_000
 
-    @staticmethod
-    def make_profile_id(provider: str, explicit_name: str = "", api_key: str = "", endpoint: str = "", token: str = "") -> str:
-        """Use a readable user label or a one-way fingerprint; never persist credentials."""
-        label = str(explicit_name or "").strip()
-        if label:
-            return f"named:{provider.lower()}:{label.casefold()}"
-        identity = "\x1f".join((provider.lower(), api_key.strip(), endpoint.strip().rstrip("/"), token.strip()))
-        if identity.strip("\x1f") == provider.lower():
-            identity += "\x1fdefault"
-        return "auto:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-
-    @staticmethod
-    def profile_display(profile_id: str) -> str:
-        if profile_id.startswith("named:"):
-            parts = profile_id.split(":", 2)
-            return parts[2] if len(parts) == 3 else profile_id[6:]
-        if profile_id.startswith("auto:"):
-            return "Auto · " + profile_id[5:]
-        return profile_id or "Legacy / unassigned"
-
-    def get_gemini_rpd(self, profile_id: str, model: str) -> dict:
+    def get_gemini_rpd(self, connection_profile_id: str, model: str) -> dict:
         """Return the configured daily cap and current manual/app usage for this connection/model."""
         today = self.pacific_today().isoformat()
         tables = self.load_tables()
         profiles = tables.get("rpd_tracking", {})
-        profile = profiles.get(profile_id or "legacy", {}) if isinstance(profiles, dict) else {}
+        profile = profiles.get(connection_profile_id or "legacy", {}) if isinstance(profiles, dict) else {}
         state = profile.get(model, {}) if isinstance(profile, dict) else {}
         if not isinstance(state, dict):
             state = {}
@@ -244,7 +243,7 @@ class UsageManager:
         except (TypeError, ValueError):
             return 0
 
-    def set_gemini_rpd(self, profile_id: str, model: str, limit: int, used: int):
+    def set_gemini_rpd(self, connection_profile_id: str, model: str, limit: int, used: int):
         limit = int(limit)
         used = int(used)
         if limit < 0 or used < 0:
@@ -252,17 +251,17 @@ class UsageManager:
         with self._lock:
             tables = self.load_tables()
             profiles = tables.setdefault("rpd_tracking", {})
-            profile = profiles.setdefault(profile_id or "legacy", {})
+            profile = profiles.setdefault(connection_profile_id or "legacy", {})
             profile[model] = {"limit": limit, "used": used, "date": self.pacific_today().isoformat()}
             self.save_tables(tables)
 
-    def _increment_gemini_rpd_locked(self, profile_id: str, model: str, requests: int):
+    def _increment_gemini_rpd_locked(self, connection_profile_id: str, model: str, requests: int):
         if requests <= 0 or not model:
             return
         today = self.pacific_today().isoformat()
         tables = self.load_tables()
         profiles = tables.setdefault("rpd_tracking", {})
-        profile = profiles.setdefault(profile_id or "legacy", {})
+        profile = profiles.setdefault(connection_profile_id or "legacy", {})
         state = profile.get(model, {})
         if not isinstance(state, dict):
             state = {}
@@ -274,13 +273,13 @@ class UsageManager:
         }
         self.save_tables(tables)
 
-    def record_usage(self, provider: str, model: str, usage: dict, profile_id: str = "") -> float | None:
+    def record_usage(self, provider: str, model: str, usage: dict, connection_profile_id: str = "") -> float | None:
         usage = usage or {}
         cost = self.calculate_cost(provider, model, usage)
         event = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "provider": provider.lower(),
-            "profile_id": profile_id or "legacy",
+            "connection_profile_id": connection_profile_id or "legacy",
             "model": model,
             "requests": max(1, int(usage.get("request_count", 1) or 1)),
             "input_tokens": max(0, int(usage.get("prompt_tokens", 0) or 0)),
@@ -300,24 +299,24 @@ class UsageManager:
                 history = []
             history.append(event)
             self._atomic_json_write(self.history_path, history[-10000:])
+            self._json_cache.pop(self.history_path, None)
             if provider.lower() == "gemini":
                 self._increment_gemini_rpd_locked(
-                    profile_id or "legacy", model, event["requests"]
+                    connection_profile_id or "legacy", model, event["requests"]
                 )
         return cost
 
     def load_history(self) -> list[dict]:
-        try:
-            with open(self.history_path, "r", encoding="utf-8") as stream:
-                data = json.load(stream)
+        """Return parsed usage rows, re-reading the file only after it changes."""
+        with self._lock:
+            data = self._read_cached_json(self.history_path, [])
             return data if isinstance(data, list) else []
-        except (FileNotFoundError, OSError, json.JSONDecodeError):
-            return []
 
     def clear_history(self):
         """Delete recorded request history without changing prices or Gemini RPD counters."""
         with self._lock:
             self._atomic_json_write(self.history_path, [])
+            self._json_cache.pop(self.history_path, None)
 
     @staticmethod
     def pacific_today(now: datetime | None = None) -> date:
@@ -336,21 +335,26 @@ class UsageManager:
             offset = -7 if dst_start <= now < dst_end else -8
             return (now + timedelta(hours=offset)).date()
 
-    def recent_cache_percent(self, provider: str, model: str, limit: int = 10, profile_id: str | None = None):
+    def recent_cache_percent(self, provider: str, model: str, limit: int = 10, connection_profile_id: str | None = None):
         rows = [row for row in self.load_history() if row.get("provider") == provider.lower() and self._matches(row.get("model", ""), model)
-                and (profile_id is None or row.get("profile_id", "legacy") == profile_id)]
+                and (connection_profile_id is None or self._history_connection_id(row) == connection_profile_id)]
         rows = [row for row in rows if row.get("cache_reported", "cached_input_tokens" in row)][-limit:]
         input_total = sum(int(row.get("input_tokens", 0) or 0) for row in rows)
         cached_total = sum(int(row.get("cached_input_tokens", 0) or 0) for row in rows)
         return round(100 * cached_total / input_total, 1) if input_total else None
 
-    def total_cost(self, provider: str | None = None, model: str | None = None, profile_id: str | None = None):
+    @staticmethod
+    def _history_connection_id(row: dict) -> str:
+        # Read old histories without rewriting or discarding their records.
+        return str(row.get("connection_profile_id") or "legacy")
+
+    def total_cost(self, provider: str | None = None, model: str | None = None, connection_profile_id: str | None = None):
         rows = self.load_history()
         rows = [
             row for row in rows
             if (provider is None or row.get("provider") == provider.lower())
             and (model is None or self._matches(row.get("model", ""), model))
-            and (profile_id is None or row.get("profile_id", "legacy") == profile_id)
+            and (connection_profile_id is None or self._history_connection_id(row) == connection_profile_id)
         ]
         costs = [row.get("cost_usd") for row in rows if row.get("cost_usd") is not None]
         return sum(float(value) for value in costs), len(costs), len(rows)

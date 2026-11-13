@@ -12,11 +12,15 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QVBoxLayout,
+    QWidget,
 )
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIntValidator
 
 from src.backend.ai_client import AIClientManager, FetchModelsWorker
 from src.backend.credential_manager import CredentialManager
 from src.backend.providers.gemini_provider import GeminiProvider
+from src.backend.usage_manager import UsageManager
 
 
 class APISettingsDialog(QDialog):
@@ -36,6 +40,7 @@ class APISettingsDialog(QDialog):
     def __init__(self, credential_manager: CredentialManager, parent=None):
         super().__init__(parent)
         self.credential_manager = credential_manager
+        self.usage_manager = UsageManager()
         self._loading = False
         self._drafts = {}
         self._profiles = self.credential_manager.get_connection_profiles()
@@ -46,59 +51,20 @@ class APISettingsDialog(QDialog):
         self.fetch_worker = None
 
         self.setWindowTitle("API and Model Settings")
-        self.setMinimumWidth(760)
+        self.setMinimumWidth(620)
 
         layout = QVBoxLayout(self)
         form = QFormLayout()
         self.form = form
 
-        profile_row = QHBoxLayout()
-        self.profile_combo = QComboBox()
-        self.profile_name_input = QLineEdit()
-        self.profile_name_input.setPlaceholderText("Profile name")
-        self.add_profile_button = QPushButton("Add")
-        self.remove_profile_button = QPushButton("Remove")
-        profile_row.addWidget(self.profile_combo, 2)
-        profile_row.addWidget(self.profile_name_input, 2)
-        profile_row.addWidget(self.add_profile_button)
-        profile_row.addWidget(self.remove_profile_button)
-        form.addRow("Connection profile:", profile_row)
-        connection_note = QLabel(
-            "Choose a saved connection to load its provider, credentials, and model."
-        )
-        connection_note.setWordWrap(True)
-        connection_note.setStyleSheet("color: #888899; font-size: 10px;")
-        form.addRow("", connection_note)
-
         self.provider_combo = QComboBox()
         self.providers = dict(AIClientManager.get_available_providers())
         for provider_id, provider in self.providers.items():
-            self.provider_combo.addItem(getattr(provider, "display_name", provider_id.title()), provider_id)
+            display_name = getattr(provider, "display_name", provider_id.title())
+            if not getattr(provider, "is_available", True):
+                display_name = f"{display_name} (Unavailable)"
+            self.provider_combo.addItem(display_name, provider_id)
         form.addRow("Provider:", self.provider_combo)
-
-        self.usage_profile_input = QComboBox()
-        self.usage_profile_input.setEditable(True)
-        self.usage_profile_input.setInsertPolicy(QComboBox.NoInsert)
-        self.usage_profile_input.lineEdit().setPlaceholderText("Automatic from credentials")
-        known_profiles = set()
-        for saved_profile in self._profiles.values():
-            saved_name = str(saved_profile.get("credentials", {}).get("usage_profile", "")).strip()
-            if saved_name:
-                known_profiles.add(saved_name)
-        for profile_name in sorted(known_profiles, key=str.casefold):
-            self.usage_profile_input.addItem(profile_name)
-        self.usage_profile_input.setToolTip(
-            "Optional name for an account, project, or connection. Reuse the same name to group usage "
-            "from multiple credentials; leave empty to identify it automatically from its credentials."
-        )
-        form.addRow("Usage group (optional):", self.usage_profile_input)
-        profile_note = QLabel(
-            "Use the same group name for API keys that share a provider account or project. "
-            "Leave empty to track usage separately for this connection."
-        )
-        profile_note.setWordWrap(True)
-        profile_note.setStyleSheet("color: #888899; font-size: 10px;")
-        form.addRow("", profile_note)
 
         self.lan_mode = QCheckBox("Use local Ollama (localhost)")
         form.addRow("Connection:", self.lan_mode)
@@ -113,7 +79,11 @@ class APISettingsDialog(QDialog):
         form.addRow(self.secondary_label, self.secondary_input)
 
         self.model_combo = QComboBox()
-        self.model_combo.setEditable(True)
+        self.model_combo.setEditable(False)
+        self.model_combo.setMaxVisibleItems(8)
+        # Windows' native popup ignores maxVisibleItems for a non-editable combo.
+        # Force Qt's popup so long model lists stay bounded and scrollable.
+        self.model_combo.setStyleSheet("QComboBox { combobox-popup: 0; }")
         form.addRow("Model:", self.model_combo)
 
         self.thinking_combo = QComboBox()
@@ -123,6 +93,46 @@ class APISettingsDialog(QDialog):
         )
         form.addRow("Thinking level:", self.thinking_combo)
         self.model_combo.currentTextChanged.connect(self._update_thinking_levels)
+
+        self.rpd_container = QWidget()
+        rpd_layout = QHBoxLayout(self.rpd_container)
+        rpd_layout.setContentsMargins(0, 0, 0, 0)
+        rpd_layout.setSpacing(7)
+        self.rpd_limit_input = QLineEdit("0")
+        self.rpd_used_input = QLineEdit("0")
+        for field in (self.rpd_limit_input, self.rpd_used_input):
+            field.setValidator(QIntValidator(0, 2_147_483_647, field))
+            field.setFixedWidth(76)
+            field.setAlignment(Qt.AlignCenter)
+            field.textChanged.connect(self._refresh_rpd_status)
+            field.editingFinished.connect(self._save_gemini_rpd_fields)
+        rpd_layout.addWidget(QLabel("Limit / day"))
+        rpd_layout.addWidget(self.rpd_limit_input)
+        rpd_layout.addWidget(QLabel("Used today"))
+        rpd_layout.addWidget(self.rpd_used_input)
+        self.rpd_status_label = QLabel()
+        self.rpd_status_label.setWordWrap(False)
+        self.rpd_row_label = QLabel("Gemini RPD:")
+        form.addRow(self.rpd_row_label, self.rpd_container)
+        form.addRow("", self.rpd_status_label)
+        self._rpd_view_key = None
+        self.model_combo.currentTextChanged.connect(self._refresh_gemini_rpd_fields)
+
+        profile_row = QHBoxLayout()
+        self.profile_combo = QComboBox()
+        self.profile_name_input = QLineEdit()
+        self.profile_name_input.setPlaceholderText("Profile name")
+        self.add_profile_button = QPushButton("Add")
+        self.remove_profile_button = QPushButton("Remove")
+        profile_row.addWidget(self.profile_combo, 2)
+        profile_row.addWidget(self.profile_name_input, 2)
+        profile_row.addWidget(self.add_profile_button)
+        profile_row.addWidget(self.remove_profile_button)
+        form.addRow("Connection profile:", profile_row)
+        connection_note = QLabel("Choose a saved connection to load its provider, credentials, and model.")
+        connection_note.setWordWrap(True)
+        connection_note.setStyleSheet("color: #888899; font-size: 10px;")
+        form.addRow("", connection_note)
         layout.addLayout(form)
 
         connect_row = QHBoxLayout()
@@ -208,7 +218,6 @@ class APISettingsDialog(QDialog):
             credentials["key"] = ""
         elif provider_id == "ollama":
             credentials["token"] = ""
-        credentials["usage_profile"] = ""
         provider_name = getattr(self.providers[provider_id], "display_name", provider_id.title())
         count = sum(1 for item in self._profiles.values()
                     if str(item.get("provider", "")).lower() == provider_id)
@@ -276,6 +285,7 @@ class APISettingsDialog(QDialog):
         try:
             provider_id = self._provider_id()
             provider = self._current_provider()
+            provider_available = bool(getattr(provider, "is_available", True))
             profile = self._profiles.get(self._selected_profile_id(), {})
             creds = profile.get("credentials", {})
             draft = self._drafts.get(self._selected_profile_id(), {})
@@ -285,9 +295,6 @@ class APISettingsDialog(QDialog):
 
             self.lan_mode.setVisible(supports_lan)
             self.lan_mode.setChecked(is_lan)
-            self.usage_profile_input.setCurrentText(
-                str(draft.get("usage_profile", creds.get("usage_profile", "")))
-            )
             connection_label = self.form.labelForField(self.lan_mode)
             if connection_label is not None:
                 connection_label.setVisible(supports_lan)
@@ -338,10 +345,92 @@ class APISettingsDialog(QDialog):
                     "Thinking level:" if self.thinking_combo.count()
                     else "Thinking level (model default):"
                 )
+            self.rpd_container.setVisible(provider_id == "gemini")
+            self.rpd_row_label.setVisible(provider_id == "gemini")
             self._loaded_lan_mode = is_lan
             self._loaded_profile_id = self._selected_profile_id()
+            self.primary_input.setEnabled(provider_available and not is_lan)
+            self.secondary_input.setEnabled(provider_available and self.secondary_input.isVisible())
+            self.model_combo.setEnabled(provider_available)
+            self.thinking_combo.setEnabled(provider_available and provider_id == "gemini" and bool(self.thinking_combo.count()))
+            self.profile_name_input.setEnabled(provider_available)
+            self.add_profile_button.setEnabled(provider_available)
+            self.remove_profile_button.setEnabled(provider_available)
+            self.connect_button.setEnabled(provider_available)
+            self.button_box.button(QDialogButtonBox.Save).setEnabled(provider_available)
+            if not provider_available:
+                self._show_error(
+                    f"{provider.display_name} is not available yet. "
+                    "See Help > Providers & Contribution for the repository and integration details."
+                )
+            else:
+                self.status_label.setText("Credentials are stored in the local application configuration.")
+                self.status_label.setStyleSheet("color: #888899;")
         finally:
             self._loading = False
+        self._refresh_gemini_rpd_fields()
+
+    def _refresh_gemini_rpd_fields(self, *_):
+        """Load the saved RPD meter for the currently selected Gemini profile/model."""
+        if self._provider_id() != "gemini":
+            self._rpd_view_key = None
+            return
+        profile_id = self._selected_profile_id()
+        model = self.model_combo.currentText().strip()
+        if not profile_id or not model:
+            self.rpd_limit_input.setText("0")
+            self.rpd_used_input.setText("0")
+            self._rpd_view_key = None
+            self._refresh_rpd_status()
+            return
+        state = self.usage_manager.get_gemini_rpd(profile_id, model)
+        view_key = (profile_id, model, state["date"])
+        changed_selection = view_key != self._rpd_view_key
+        self._rpd_view_key = view_key
+        if changed_selection or not self.rpd_limit_input.hasFocus():
+            self.rpd_limit_input.setText(str(state["limit"]))
+        if changed_selection or not self.rpd_used_input.hasFocus():
+            self.rpd_used_input.setText(str(state["used"]))
+        self._refresh_rpd_status()
+
+    def _refresh_rpd_status(self, *_):
+        """Show validation/limit state inline in API Settings."""
+        try:
+            limit = int(self.rpd_limit_input.text().strip() or 0)
+            used = int(self.rpd_used_input.text().strip() or 0)
+        except ValueError:
+            self.rpd_status_label.setText("Enter whole numbers only.")
+            self.rpd_status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
+            return
+        if limit > 0 and used > limit:
+            text, color = f"RPD limit exceeded: {used} / {limit}", "#ff5252"
+        elif limit == 0:
+            text, color = "RPD tracking off (limit is 0)", "#a0a0ad"
+        else:
+            text, color = f"RPD within limit: {used} / {limit}", "#00e676"
+        self.rpd_status_label.setText(text)
+        self.rpd_status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+    def _save_gemini_rpd_fields(self):
+        """Persist the editable daily request limit and count for this profile/model."""
+        if self._provider_id() != "gemini":
+            return
+        profile_id = self._selected_profile_id()
+        model = self.model_combo.currentText().strip()
+        if not profile_id or not model:
+            return
+        try:
+            self.usage_manager.set_gemini_rpd(
+                profile_id,
+                model,
+                int(self.rpd_limit_input.text().strip() or 0),
+                int(self.rpd_used_input.text().strip() or 0),
+            )
+        except (ValueError, OSError) as error:
+            self.rpd_status_label.setText(f"Could not save RPD values: {error}")
+            self.rpd_status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
+            return
+        self._refresh_rpd_status()
 
     def _provider_changed(self, *_):
         if self._loaded_provider:
@@ -375,7 +464,6 @@ class APISettingsDialog(QDialog):
         values = {
             "model": self.model_combo.currentText().strip(),
             "models_list": [self.model_combo.itemText(i) for i in range(self.model_combo.count())],
-            "usage_profile": self.usage_profile_input.currentText().strip(),
         }
         if provider_id == "gemini" and self.thinking_combo.count():
             values["thinking_level"] = self.thinking_combo.currentText().lower()
@@ -406,6 +494,12 @@ class APISettingsDialog(QDialog):
     def test_connection(self):
         provider_id, key_or_url, token = self._connection_values()
         provider = self._current_provider()
+        if not getattr(provider, "is_available", True):
+            self._show_error(
+                f"{provider.display_name} is not available yet. "
+                "See Help > Providers & Contribution for more information."
+            )
+            return
         requires_endpoint = bool(getattr(provider, "requires_endpoint", False))
         is_lan = bool(getattr(provider, "has_lan_mode", False) and self.lan_mode.isChecked())
 
@@ -427,7 +521,6 @@ class APISettingsDialog(QDialog):
             self.lan_mode,
             self.primary_input,
             self.secondary_input,
-            self.usage_profile_input,
             self.model_combo,
         ):
             control.setEnabled(False)
@@ -446,7 +539,6 @@ class APISettingsDialog(QDialog):
         self.profile_name_input.setEnabled(True)
         self.add_profile_button.setEnabled(True)
         self._update_profile_controls()
-        self.usage_profile_input.setEnabled(True)
         self.model_combo.setEnabled(True)
         provider = self._current_provider()
         is_lan = bool(getattr(provider, "has_lan_mode", False) and self.lan_mode.isChecked())
@@ -454,6 +546,9 @@ class APISettingsDialog(QDialog):
         self.primary_input.setEnabled(not is_lan)
         self.secondary_input.setEnabled(self.secondary_input.isVisible())
         if not success:
+            if not getattr(provider, "is_available", True):
+                self._show_error(message)
+                return
             provider_id, endpoint, is_lan = getattr(
                 self, "_pending_connection", (self._provider_id(), "", False)
             )
@@ -486,6 +581,14 @@ class APISettingsDialog(QDialog):
         self.status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
 
     def _save_and_accept(self):
+        provider = self._current_provider()
+        if not getattr(provider, "is_available", True):
+            self._show_error(
+                f"{provider.display_name} is not available yet. "
+                "See Help > Providers & Contribution for integration details."
+            )
+            return
+        self._save_gemini_rpd_fields()
         profile_id = self._selected_profile_id()
         self._capture_draft(profile_id)
         self._capture_profile_name()

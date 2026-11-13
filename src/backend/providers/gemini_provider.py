@@ -42,7 +42,8 @@ UNSAFE_FINISH_REASONS = {
 class GeminiProvider(BaseAIProvider):
     """Provider implementation for Google Gemini Vision REST API endpoints."""
 
-    display_name = "Gemini"
+    # UI label only. Internal provider routing continues to use provider_id="gemini".
+    display_name = "Google (Gemini)"
     requires_endpoint = False
     has_lan_mode = False
     is_primary_secret = True

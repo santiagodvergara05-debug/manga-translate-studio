@@ -22,13 +22,17 @@ from PySide6.QtWidgets import (
 
 
 class UsagePricingDialog(QDialog):
-    def __init__(self, usage_manager, provider: str, model: str, profile_id: str = "", parent=None):
+    def __init__(
+        self, usage_manager, provider: str, model: str, connection_profile_id: str = "",
+        parent=None, *, connection_profile_name: str = "", connection_profiles: dict | None = None,
+    ):
         super().__init__(parent)
         self.usage_manager = usage_manager
         self.provider = provider.lower()
         self.model = model
-        self.profile_id = profile_id or "legacy"
-        self.profile_display = usage_manager.profile_display(self.profile_id)
+        self.connection_profile_id = connection_profile_id or "legacy"
+        self.connection_profile_name = connection_profile_name or "Legacy / unassigned"
+        self.connection_profiles = connection_profiles or {}
         self.data = usage_manager.load_tables()
         self.setWindowTitle("Usage & Pricing")
         self.setMinimumSize(940, 580)
@@ -77,8 +81,8 @@ class UsagePricingDialog(QDialog):
         self.lbl_usage_summary.setWordWrap(True)
         layout.addWidget(self.lbl_usage_summary)
         note = QLabel(
-            "History stores token counts, model names, and a profile label/fingerprint; it does not store prompts, images, or API keys. "
-            "Older entries without a profile appear as Legacy / unassigned."
+            "History stores token counts, model names, and the saved connection profile ID; it does not store prompts, images, or API keys. "
+            "Older entries without a connection profile appear as Legacy / unassigned."
         )
         note.setStyleSheet("color: #888899; font-size: 10px;")
         layout.addWidget(note)
@@ -97,21 +101,6 @@ class UsagePricingDialog(QDialog):
             if provider_name != self.provider:
                 self.provider_filter.addItem(provider_name.title(), provider_name)
         filter_row.addWidget(self.provider_filter)
-        filter_row.addWidget(QLabel("Usage group:"))
-        self.profile_filter = QComboBox()
-        self.profile_filter.addItem(f"Current ({self.profile_display})", self.profile_id)
-        self.profile_filter.addItem("All groups", "*")
-        known_profiles = sorted({
-            str(row.get("profile_id", "legacy"))
-            for row in self.usage_manager.load_history()
-            if row.get("profile_id")
-        })
-        if any(not row.get("profile_id") for row in self.usage_manager.load_history()):
-            known_profiles.append("legacy")
-        for saved_id in known_profiles:
-            if saved_id != self.profile_id:
-                self.profile_filter.addItem(self.usage_manager.profile_display(saved_id), saved_id)
-        filter_row.addWidget(self.profile_filter)
         filter_row.addStretch()
         self.clear_history_button = QPushButton("Clear all history")
         self.clear_history_button.setToolTip(
@@ -122,11 +111,10 @@ class UsagePricingDialog(QDialog):
         layout.addLayout(filter_row)
 
         self.history_table = self._new_table(
-            ["Time", "Provider", "Model", "Profile", "Requests", "Input", "Cache", "Output", "Est. USD"]
+            ["Time", "Provider", "Model", "Connection", "Requests", "Input", "Cache", "Output", "Est. USD"]
         )
         layout.addWidget(self.history_table, 1)
         self.provider_filter.currentIndexChanged.connect(self._refresh_usage_history)
-        self.profile_filter.currentIndexChanged.connect(self._refresh_usage_history)
         self._refresh_usage_history()
         self.tabs.addTab(tab, "Usage")
 
@@ -134,12 +122,10 @@ class UsagePricingDialog(QDialog):
         if not hasattr(self, "history_table"):
             return
         provider_value = str(self.provider_filter.currentData() or "*")
-        profile_value = str(self.profile_filter.currentData() or "*")
         history = self.usage_manager.load_history()
         filtered = [
             entry for entry in history
             if (provider_value == "*" or str(entry.get("provider", "")).lower() == provider_value)
-            and (profile_value == "*" or str(entry.get("profile_id", "legacy")) == profile_value)
         ]
         displayed = filtered[-250:]
         self.history_table.setRowCount(len(displayed))
@@ -153,7 +139,10 @@ class UsagePricingDialog(QDialog):
                 timestamp,
                 entry.get("provider", ""),
                 entry.get("model", ""),
-                self.usage_manager.profile_display(entry.get("profile_id", "legacy")),
+                self.connection_profiles.get(
+                    str(entry.get("connection_profile_id", "legacy")),
+                    "Legacy / unassigned" if "connection_profile_id" not in entry else "Removed connection",
+                ),
                 entry.get("requests", 1),
                 f"{int(entry.get('input_tokens', 0)):,}",
                 f"{int(entry.get('cached_input_tokens', 0)):,}" if entry.get("cache_reported", "cached_input_tokens" in entry) else "—",
@@ -164,18 +153,16 @@ class UsagePricingDialog(QDialog):
                 self._put(self.history_table, row_idx, col, value, editable=False)
 
         provider_filter = None if provider_value == "*" else provider_value
-        profile_filter = None if profile_value == "*" else profile_value
         total, priced_rows, request_rows = self.usage_manager.total_cost(
-            provider=provider_filter, profile_id=profile_filter
+            provider=provider_filter
         )
         provider_label = "All providers" if provider_filter is None else provider_filter.title()
-        profile_label = "All groups" if profile_filter is None else self.usage_manager.profile_display(profile_filter)
         cache_pct = self.usage_manager.recent_cache_percent(
-            self.provider, self.model, profile_id=self.profile_id
+            self.provider, self.model, connection_profile_id=self.connection_profile_id
         ) if self.model else None
         cache_text = f"Recent cache match: {cache_pct:g}%" if cache_pct is not None else "Recent cache match: not reported"
         self.lbl_usage_summary.setText(
-            f"Showing: {provider_label} · {profile_label}\n"
+            f"Showing: {provider_label} · Connection: {self.connection_profile_name}\n"
             f"Active model: {self.model or 'No model selected'} · Tracked requests: {request_rows} · "
             f"Priced requests: {priced_rows} · Estimated total: ${total:.6f}\n"
             f"{cache_text} (last 10 requests for the active provider/model)"
@@ -187,7 +174,7 @@ class UsagePricingDialog(QDialog):
         answer = QMessageBox.question(
             self,
             "Clear all usage history",
-            "Delete all recorded usage history for every provider and profile?\n\n"
+            "Delete all recorded usage history for every provider and connection?\n\n"
             "Price tables and Gemini RPD counters will remain unchanged.",
             QMessageBox.Yes | QMessageBox.Cancel,
             QMessageBox.Cancel,

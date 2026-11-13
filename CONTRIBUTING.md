@@ -97,6 +97,8 @@ def get_sfx_rule_for_target(target_display_text: str, is_asian_src: bool) -> str
 
 Thanks to our dynamic provider schema, adding a new provider engine does not require altering UI form layouts.
 
+The settings list also contains scaffolds for OpenAI, xAI, Anthropic (Claude), OpenRouter, and DeepSeek. These entries inherit the shared placeholder in `base_provider.py` and are deliberately marked unavailable: they do not make network requests and cannot be saved as active connections. A provider PR should replace the scaffold with a real integration, verify vision payload and response handling, report only usage values supplied by that API, and document required credentials and setup. Do not remove the unavailable guard until the integration has been tested against the provider.
+
 ### Step 1: Implement the Provider Class
 
 Create a new module under `src/backend/providers/<provider_name>_provider.py` inheriting from `BaseAIProvider`:
@@ -218,16 +220,7 @@ Open `src/backend/credential_manager.py` and declare the default credential sche
 
 ```
 
-### Step 4: Add Provider Vector Icon
-
-1. Place the official SVG logo inside `assets/icon_provider/<provider_id>.svg` (matching your provider key in lowercase, e.g. `assets/icon_provider/custom_key.svg`).
-2. Adhere to **Qt SVG Tiny specifications**:
-* Avoid complex clip-paths, filters (`<feGaussianBlur>`), and embedded CSS stylesheets.
-* Use simple vector paths with high-contrast fills (`#ffffff` or bright accents) legible on dark backgrounds (`#121218`).
-
-
-
-> **Note**: `TranslatorPanel` automatically discovers and renders all registered providers from `AIClientManager`. No manual UI changes are needed.
+> **Note**: `TranslatorPanel` automatically discovers and renders provider names from `AIClientManager`. Provider logo assets are not used by the current interface and should not be added as part of a provider integration.
 
 ---
 
@@ -289,7 +282,6 @@ python main.py
 * [ ] Class UI attributes (`display_name`, `requires_endpoint`, etc.) are declared.
 * [ ] Distinguishes between transient rate limits (RPM / 429) and daily quota exhaustion (`DailyQuotaExceeded`).
 * [ ] Content moderation blocks are mapped to `ProviderStatus.SAFETY_BLOCKED`.
-* [ ] Vector icon added to `assets/icon_provider/<provider_id>.svg`.
 * [ ] Added default schema in `CredentialManager`.
 * [ ] Registered in `AIClientManager.PROVIDERS`.
 * [ ] Usage and cache token fields reflect provider-reported metadata only; missing cache metadata is not represented as a confirmed cache miss.

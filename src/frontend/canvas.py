@@ -102,13 +102,14 @@ class MangaCanvas(QGraphicsView):
 
     def wheelEvent(self, event):
         """
-        Scrolls the page normally; hold Ctrl while scrolling to zoom.
+        Scrolls the page normally; hold Ctrl or Alt while scrolling to zoom.
         """
         if self.is_locked:
             event.ignore()
             return
 
-        if not (event.modifiers() & Qt.ControlModifier):
+        modifiers = event.modifiers()
+        if not (modifiers & (Qt.ControlModifier | Qt.AltModifier)):
             super().wheelEvent(event)
             return
 

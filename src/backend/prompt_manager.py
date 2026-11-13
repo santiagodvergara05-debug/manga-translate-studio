@@ -37,6 +37,7 @@ DEFAULT_USER_RULES = ""
 DEFAULT_EXTRACTION_OPTIONS = {
     "sfx": True,
     "sfx_meaning": False,
+    "deduplicate_sfx": False,
     "narration": True,
     "outside": True,
     "variants": True,
@@ -169,6 +170,10 @@ class PromptManager:
                 "- Write the explanation in the selected target language. It is a semantic gloss, not another onomatopoeia or a replacement for direct.",
                 '- If the meaning is unclear, use an empty string. Do not add "sfx_meaning" to entities of other types.',
             ])
+        if options["sfx"] and options.get("deduplicate_sfx", False):
+            lines.append(
+                "- For SFX only, if identical visible lettering repeats on this page, return its first occurrence only; keep all other entities unchanged."
+            )
         return "\n".join(lines)
 
     def build_full_prompt(
