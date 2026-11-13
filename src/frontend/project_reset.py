@@ -123,6 +123,12 @@ class ProjectResetController:
             translator.loaded_script_path = None
             translator.path_dialogues_map.clear()
             translator.page_bubbles_data.clear()
+            if hasattr(translator, "page_language_pairs"):
+                translator.page_language_pairs.clear()
+            if hasattr(translator, "pending_language_pairs"):
+                translator.pending_language_pairs.clear()
+            if hasattr(translator, "page_token_usage"):
+                translator.page_token_usage.clear()
 
             if hasattr(translator, "lbl_script_status"):
                 translator.lbl_script_status.setText("Script: None")
@@ -159,9 +165,9 @@ class ProjectResetController:
         ProjectResetController._trim_linux_heap()
 
         try:
-            mw.update_telemetry()
+            mw.refresh_usage_summary()
         except Exception as exc:
-            logger.debug(f"[RESET] Telemetry refresh skipped: {exc}")
+            logger.debug(f"[RESET] Usage summary refresh skipped: {exc}")
 
         logger.info("[STUDIO] Project reset completed; memory reclaimed successfully.")
         QMessageBox.information(

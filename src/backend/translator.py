@@ -10,8 +10,7 @@ import re
 import subprocess
 import unicodedata
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, 
     QFileDialog, QMessageBox, QComboBox, QLineEdit, QScrollArea, 
@@ -24,7 +23,10 @@ from src.utils.logger import logger
 from src.backend.prompt_manager import PromptManager
 from src.backend.credential_manager import CredentialManager
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
-from src.backend.ai_client import FetchModelsWorker, MultimodalTranslationWorker, AIClientManager
+from src.backend.ai_client import MultimodalTranslationWorker, AIClientManager
+from src.backend.usage_manager import UsageManager
+from src.backend.providers.gemini_provider import GeminiProvider
+from src.frontend.api_settings import APISettingsDialog
 from src.backend.languages import (
     get_source_display_names, 
     get_target_display_names
@@ -130,8 +132,24 @@ class CreateScriptDialog(QDialog):
 class RulesDialog(QDialog):
     """Configuration dialog for customizing engine constraints and user-defined glossary rules."""
 
-    def __init__(self, user_rules: str, core_rules: str, parent=None):
+    def __init__(
+        self,
+        user_rules: str,
+        core_rules: str,
+        options: dict = None,
+        parent=None,
+        *,
+        prompt_manager: PromptManager = None,
+        src_lang: str = "English",
+        tgt_lang: str = "Spanish (Neutral)",
+        medium: str = "Manhwa",
+    ):
         super().__init__(parent)
+        self.preview_manager = prompt_manager or PromptManager()
+        self.preview_manager.core_rules = core_rules
+        self.preview_src_lang = src_lang
+        self.preview_tgt_lang = tgt_lang
+        self.preview_medium = medium
         self.setWindowTitle("Rules & System Prompt Configuration")
         self.resize(760, 580)
         self.setStyleSheet(f"background-color: {Config.COLOR_PANEL}; color: {Config.COLOR_TEXT};")
@@ -156,23 +174,72 @@ class RulesDialog(QDialog):
         lay_u.addWidget(lbl_u)
         lay_u.addWidget(self.txt_user_rules)
 
-        tab_core = QWidget()
-        lay_c = QVBoxLayout(tab_core)
-        lbl_c = QLabel("Fixed engine constraints and extraction schema:")
-        lbl_c.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 11px;")
-        self.txt_core_rules = QTextEdit()
-        self.txt_core_rules.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a35; font-family: Consolas, monospace; font-size: 11px; padding: 6px;")
-        self.txt_core_rules.setPlainText(core_rules)
-        lay_c.addWidget(lbl_c)
-        lay_c.addWidget(self.txt_core_rules)
+        from src.backend.prompt_manager import DEFAULT_EXTRACTION_OPTIONS
+        option_values = dict(DEFAULT_EXTRACTION_OPTIONS)
+        if isinstance(options, dict):
+            option_values.update(options)
 
+        tab_prompt = QWidget()
+        lay_p = QVBoxLayout(tab_prompt)
+        lbl_p = QLabel("Base prompt sent to the model (previous-page continuity may be appended per page). Read-only; reflects the current medium, rules, and options when this tab is opened.")
+        lbl_p.setWordWrap(True)
+        lbl_p.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 11px;")
+        lay_p.addWidget(lbl_p)
+
+        lbl_medium = QLabel(f"Current medium: {medium}")
+        lbl_medium.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px;")
+        lay_p.addWidget(lbl_medium)
+
+        self.txt_prompt_preview = QTextEdit()
+        self.txt_prompt_preview.setReadOnly(True)
+        self.txt_prompt_preview.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        self.txt_prompt_preview.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.txt_prompt_preview.setStyleSheet(f"background-color: {Config.COLOR_BG}; border: 1px solid #2a2a35; font-family: Consolas, monospace; font-size: 11px; padding: 6px;")
+        lay_p.addWidget(self.txt_prompt_preview, 1)
+
+        tab_options = QWidget()
+        lay_o = QVBoxLayout(tab_options)
+        lbl_o = QLabel(
+            "Choose which content and optional output fields the model should generate. "
+            "Token arrows show possible impact, not a fixed estimate."
+        )
+        lbl_o.setWordWrap(True)
+        lbl_o.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 11px;")
+        lay_o.addWidget(lbl_o)
+
+        option_specs = [
+            ("sfx", "Sound effects and onomatopoeias", "Extract and translate comic sound lettering. ⬆ More output if found · ⬇ off saves those items."),
+            ("sfx_meaning", "Explain sound-effect meaning", "Adds a concise meaning note to SFX cards in the selected target language. ⬆ Extra output for SFX only · requires SFX."),
+            ("narration", "Narration boxes and captions", "Include narration outside speech bubbles. ⬆ More output if found · ⬇ off saves those items."),
+            ("outside", "Floating outside text", "Include signs, labels, and other text outside bubbles. ⬆ More output if found · ⬇ off saves those items."),
+            ("variants", "Translation variants", "⬆ Formal, aggressive, and natural alternatives can add output tokens. Disable for direct translation only."),
+            ("subtext", "Tone notes (subtext)", "⬆ Optional short tone notes add output when generated. Disable to omit them."),
+            ("r19_mode", "R19 vocalization mode", "Adds contextual rules for distinguishing breathy vocalizations from laughter. ⬆ Small prompt increase; no extra output fields."),
+        ]
+        self.option_checks = {}
+        for key, title, description in option_specs:
+            checkbox = QCheckBox(title)
+            checkbox.setChecked(bool(option_values.get(key, True)))
+            checkbox.setStyleSheet("font-size: 11px; font-weight: bold;")
+            detail = QLabel(description)
+            detail.setWordWrap(True)
+            detail.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px; margin-left: 22px;")
+            lay_o.addWidget(checkbox)
+            lay_o.addWidget(detail)
+            self.option_checks[key] = checkbox
+            checkbox.toggled.connect(self._update_prompt_preview)
+        self.option_checks["sfx"].toggled.connect(self._sync_sfx_meaning_option)
+        self._sync_sfx_meaning_option(self.option_checks["sfx"].isChecked())
         self.tabs.addTab(tab_user, "User Rules (Tone & Lore)")
-        self.tabs.addTab(tab_core, "Core Engine (Technical)")
+        self.tabs.addTab(tab_prompt, "System Prompt (Read-only)")
+        self.tabs.addTab(tab_options, "Extraction Options")
         lay.addWidget(self.tabs)
 
+        self.txt_user_rules.textChanged.connect(self._update_prompt_preview)
+
         btn_row = QHBoxLayout()
-        btn_restore = QPushButton("Restore Defaults")
-        btn_restore.clicked.connect(self._restore_defaults)
+        self.btn_restore = QPushButton("Restore Defaults")
+        self.btn_restore.clicked.connect(self._restore_defaults)
         btn_save = QPushButton("Save Rules to Disk")
         btn_save.setObjectName("PrimaryBtn")
         btn_save.setStyleSheet("background-color: #00d2ff; color: black; font-weight: bold; padding: 6px 16px;")
@@ -180,23 +247,65 @@ class RulesDialog(QDialog):
         btn_cancel = QPushButton("Cancel")
         btn_cancel.clicked.connect(self.reject)
 
-        btn_row.addWidget(btn_restore)
+        btn_row.addWidget(self.btn_restore)
         btn_row.addStretch()
         btn_row.addWidget(btn_cancel)
         btn_row.addWidget(btn_save)
         lay.addLayout(btn_row)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        self._update_restore_button(self.tabs.currentIndex())
+
+    def _current_options(self) -> dict:
+        return {key: checkbox.isChecked() for key, checkbox in self.option_checks.items()}
+
+    def _sync_sfx_meaning_option(self, sfx_enabled: bool):
+        """Locks the dependent meaning option when SFX extraction is disabled."""
+        meaning_checkbox = self.option_checks["sfx_meaning"]
+        if not sfx_enabled:
+            meaning_checkbox.setChecked(False)
+        meaning_checkbox.setEnabled(sfx_enabled)
+        meaning_checkbox.setToolTip(
+            "Enable Sound effects and onomatopoeias first."
+            if not sfx_enabled else
+            "Show a concise sound-effect meaning note; this does not change the translation or .TXT output."
+        )
+
+    def _update_prompt_preview(self, *_):
+        """Rebuilds the read-only prompt preview from the current unsaved controls."""
+        if self.tabs.currentIndex() != 1:
+            return
+        prompt = self.preview_manager.build_full_prompt(
+            src_lang=self.preview_src_lang,
+            tgt_lang=self.preview_tgt_lang,
+            medium=self.preview_medium,
+            user_rules=self.txt_user_rules.toPlainText().strip(),
+            options=self._current_options(),
+        )
+        self.txt_prompt_preview.setPlainText(prompt)
+
+    def _on_tab_changed(self, tab_index: int):
+        self._update_restore_button(tab_index)
+        if tab_index == 1:
+            self._update_prompt_preview()
+
+    def _update_restore_button(self, tab_index: int):
+        self.btn_restore.setEnabled(tab_index != 1)
 
     def _restore_defaults(self):
-        """Restores text editors to default engine configurations."""
-        from src.backend.prompt_manager import DEFAULT_CORE_RULES, DEFAULT_USER_RULES
+        """Restores defaults for the currently selected editable settings tab."""
+        from src.backend.prompt_manager import (
+            DEFAULT_USER_RULES,
+            DEFAULT_EXTRACTION_OPTIONS,
+        )
         if self.tabs.currentIndex() == 0:
             self.txt_user_rules.setPlainText(DEFAULT_USER_RULES)
         else:
-            self.txt_core_rules.setPlainText(DEFAULT_CORE_RULES)
+            for key, checkbox in self.option_checks.items():
+                checkbox.setChecked(DEFAULT_EXTRACTION_OPTIONS[key])
 
-    def get_results(self) -> tuple[str, str]:
-        """Returns the modified user rules and core extraction rules."""
-        return self.txt_user_rules.toPlainText().strip(), self.txt_core_rules.toPlainText().strip()
+    def get_results(self) -> tuple[str, dict]:
+        """Returns editable user rules and extraction option values."""
+        return self.txt_user_rules.toPlainText().strip(), self._current_options()
 
 
 # //////////////////////////////////////////////////////#
@@ -360,6 +469,9 @@ class TranslatorPanel(QWidget):
         self.active_worker = None
         self.fetch_worker = None
         self.page_bubbles_data = {}
+        self.page_token_usage = {}
+        self.page_language_pairs = {}
+        self.pending_language_pairs = {}
 
         # Core isolated managers
         self.prompt_manager = PromptManager()
@@ -377,16 +489,9 @@ class TranslatorPanel(QWidget):
         try:
             cfg = self.cred_manager.data
 
-            provider = cfg.get("provider", "Gemini")
             mode = cfg.get("mode", "Manhwa")
             src_lang = cfg.get("src_lang", "English")
             tgt_lang = cfg.get("tgt_lang", "Spanish (Neutral)")
-
-            p_idx = self.provider_combo.findText(provider)
-            if p_idx < 0:
-                p_idx = self.provider_combo.findData(provider.lower())
-            if p_idx >= 0:
-                self.provider_combo.setCurrentIndex(p_idx)
 
             m_idx = self.mode_combo.findText(mode)
             if m_idx >= 0:
@@ -402,11 +507,7 @@ class TranslatorPanel(QWidget):
                     self.tgt_lang_combo.setCurrentIndex(i)
                     break
 
-            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-            creds = self.cred_manager.get_provider_credentials(provider_id)
-            self.chk_lan_mode.setChecked(bool(creds.get("lan_mode", True)))
-
-            self._update_fields_for_provider()
+            self._refresh_api_summary()
 
         except Exception as e:
             logger.error(f"[TRANSLATOR] Error loading session credentials: {e}")
@@ -419,40 +520,73 @@ class TranslatorPanel(QWidget):
             return
 
         try:
-            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-            provider_engine = AIClientManager.get_provider(provider_id)
-
-            models_list = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
-            selected_model = self.model_combo.currentText().strip()
-
-            provider_data = {
-                "model": selected_model,
-                "models_list": models_list
-            }
-
-            if getattr(provider_engine, "requires_endpoint", False):
-                is_lan = getattr(provider_engine, "has_lan_mode", False) and self.chk_lan_mode.isChecked()
-                default_ep = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
-                placeholder_ep = getattr(provider_engine, "primary_placeholder", "https://ollama.com/v1")
-
-                provider_data["lan_mode"] = is_lan
-                provider_data["url"] = default_ep if is_lan else (self.primary_input.text().strip() or placeholder_ep)
-                provider_data["token"] = "" if is_lan else self.secondary_input.text().strip()
-            else:
-                provider_data["key"] = self.primary_input.text().strip()
-
             payload = {
-                "provider": self.provider_combo.currentText(),
                 "mode": self.mode_combo.currentText(),
                 "src_lang": self.src_lang_combo.currentText(),
                 "tgt_lang": self.tgt_lang_combo.currentText(),
-                provider_id: provider_data
             }
 
             self.cred_manager.save(payload)
             self.update_token_estimate()
         except Exception as e:
             logger.error(f"[TRANSLATOR] Error saving session config: {e}")
+
+    def get_active_api_config(self) -> dict:
+        """Returns the selected provider and its saved connection details."""
+        provider_id = str(self.cred_manager.data.get("provider", "gemini")).lower()
+        provider = AIClientManager.get_provider(provider_id)
+        creds = self.cred_manager.get_provider_credentials(provider_id)
+        requires_endpoint = bool(getattr(provider, "requires_endpoint", False))
+        is_lan = bool(getattr(provider, "has_lan_mode", False) and creds.get("lan_mode", True))
+        default_models = getattr(provider, "default_models", []) or [""]
+        config = {
+            "provider_id": provider_id,
+            "provider_name": getattr(provider, "display_name", provider_id.title()),
+            "model": str(creds.get("model", "")).strip()
+            or default_models[0],
+            "api_key": "",
+            "endpoint_url": "",
+            "token": "",
+            "is_lan": is_lan,
+            "thinking_level": str(creds.get("thinking_level", "minimal")).lower(),
+            "request_pacing": str(self.cred_manager.data.get("request_pacing", "low")).lower(),
+        }
+        if requires_endpoint:
+            config["endpoint_url"] = (
+                getattr(provider, "default_endpoint", "http://localhost:11434")
+                if is_lan else str(creds.get("url", "")).strip()
+            )
+            config["token"] = "" if is_lan else str(creds.get("token", "")).strip()
+            config["has_credentials"] = is_lan or bool(config["token"])
+        else:
+            config["api_key"] = str(creds.get("key", "")).strip()
+            config["has_credentials"] = bool(config["api_key"])
+        config["usage_profile"] = UsageManager.make_profile_id(
+            provider_id,
+            explicit_name=creds.get("usage_profile", ""),
+            api_key=config["api_key"],
+            endpoint=config["endpoint_url"],
+            token=config["token"],
+        )
+        return config
+
+    def _refresh_api_summary(self):
+        """Updates the compact provider summary shown in the translation panel."""
+        if not hasattr(self, "api_summary"):
+            return
+        config = self.get_active_api_config()
+        model = config["model"] or "No model selected"
+        state = "Ready" if config["has_credentials"] else "Credentials needed"
+        self.api_summary.setText(f"{config['provider_name']} · {model} · {state}")
+
+    def on_open_api_settings(self):
+        """Opens provider settings without exposing credentials in the main panel."""
+        dialog = APISettingsDialog(self.cred_manager, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._refresh_api_summary()
+            self.update_token_estimate()
+            if hasattr(self.mw, "refresh_usage_summary"):
+                self.mw.refresh_usage_summary()
 
     def get_full_prompt(self) -> str:
         """Constructs system prompt utilizing the isolated prompt manager."""
@@ -468,16 +602,67 @@ class TranslatorPanel(QWidget):
         continuity = self.prompt_manager.build_continuity_context(
             current_path=path,
             all_project_paths=self._get_all_project_paths(),
-            page_bubbles_data=self.page_bubbles_data
+            page_bubbles_data=self.page_bubbles_data,
+            page_language_pairs=self.page_language_pairs,
+            language_pair=self.current_language_pair(),
         )
         return base_prompt + continuity
 
-    def update_token_estimate(self):
-        """Calculates token overhead estimation based on prompt and active image viewport."""
-        prompt = self.get_full_prompt()
-        path = self.mw.current_img_path
+    def current_language_pair(self) -> tuple[str, str]:
+        return self.src_lang_combo.currentText(), self.tgt_lang_combo.currentText()
+
+    def build_request_prompts(self, path: str) -> tuple[str, str]:
+        """Separates stable system rules from per-page continuity and image instructions."""
+        system_prompt = self.get_full_prompt()
+        page_context = self.prompt_manager.build_continuity_context(
+            current_path=path,
+            all_project_paths=self._get_all_project_paths(),
+            page_bubbles_data=self.page_bubbles_data,
+            page_language_pairs=self.page_language_pairs,
+            language_pair=self.current_language_pair(),
+        ).strip()
+        user_prompt = page_context or "Translate the attached page according to the system instructions."
+        return system_prompt, user_prompt
+
+    def update_token_estimate(self, path: str = None, prompt: str = None):
+        """Shows a preflight estimate for the current page and its continuity context."""
+        path = path or self.mw.current_img_path
+        prompt = prompt if prompt is not None else (
+            self.build_prompt_for(path) if path else self.get_full_prompt()
+        )
         total, txt_tok, img_tok = AIClientManager.estimate_tokens(prompt, path)
         self.lbl_token_counter.setText(f"⚡ Est. Tokens: ~{total:,} (Text: ~{txt_tok:,} | Img: ~{img_tok:,})")
+        self.lbl_token_counter.setStyleSheet("color: #00d4ff; font-size: 9px; font-weight: bold;")
+        self.lbl_token_counter.setToolTip(
+            "Approximate input tokens before sending. Actual usage appears after the response when the provider reports it."
+        )
+
+    def show_token_usage(self, usage: dict):
+        """Displays provider-reported usage, keeping thinking separate from visible output."""
+        usage = usage or {}
+        input_tokens = int(usage.get("prompt_tokens", 0) or 0)
+        output_tokens = int(usage.get("output_tokens", 0) or 0)
+        thinking_tokens = int(usage.get("thought_tokens", 0) or 0)
+        total_tokens = int(usage.get("total_tokens", 0) or 0)
+        if not any((input_tokens, output_tokens, thinking_tokens, total_tokens)):
+            return False
+
+        parts = [f"In {input_tokens:,}", f"Out {output_tokens:,}"]
+        if "cache_tokens" in usage:
+            cached_tokens = min(input_tokens, int(usage.get("cache_tokens", 0) or 0))
+            cache_percent = 100 * cached_tokens / input_tokens if input_tokens else 0
+            parts.insert(1, f"Cache {cached_tokens:,} ({cache_percent:.0f}%)")
+        if thinking_tokens:
+            parts.append(f"Think {thinking_tokens:,}")
+        parts.append(f"Total {total_tokens or input_tokens + output_tokens + thinking_tokens:,}")
+        if usage.get("cost_usd") is not None:
+            parts.append(f"Cost ${float(usage['cost_usd']):.6f}")
+        self.lbl_token_counter.setText("⚡ Real: " + " · ".join(parts))
+        self.lbl_token_counter.setStyleSheet("color: #00e676; font-size: 9px; font-weight: bold;")
+        self.lbl_token_counter.setToolTip(
+            "Usage reported by the provider. Cache tokens are a subset of input; thinking tokens are separate when available."
+        )
+        return True
 
     def init_ui(self):
         lay = QVBoxLayout(self)
@@ -494,37 +679,27 @@ class TranslatorPanel(QWidget):
 
         row_top = QHBoxLayout()
 
-        def _get_provider_icon(name: str) -> QIcon:
-            p = os.path.join(Paths.BUNDLE_DIR, "assets", "icon_provider", f"{name.lower()}.svg")
-            return QIcon(p) if os.path.exists(p) else QIcon()
-
-        self.provider_combo = QComboBox()
-        self.provider_combo.setIconSize(QSize(18, 18))
-
-        if hasattr(AIClientManager, "get_available_providers"):
-            available_providers = AIClientManager.get_available_providers()
-        else:
-            from src.backend.ai_client import PROVIDERS
-            available_providers = list(PROVIDERS.items())
-
-        for p_id, p_instance in available_providers:
-            disp_name = getattr(p_instance, "display_name", p_id.capitalize())
-            self.provider_combo.addItem(_get_provider_icon(p_id), disp_name, userData=p_id)
-
-        self.provider_combo.currentIndexChanged.connect(self._on_provider_change)
-
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["Manhwa", "Manga", "Comic", "Manhua"])
         self.mode_combo.currentIndexChanged.connect(self._save_session_credentials)
+
+        self.btn_api_settings = QPushButton("⚙ API Settings")
+        self.btn_api_settings.setStyleSheet("background-color: #1e1e26; border: 1px solid #333342; font-size: 11px; font-weight: bold; padding: 4px 10px;")
+        self.btn_api_settings.clicked.connect(self.on_open_api_settings)
 
         self.btn_rules = QPushButton("⚙ Rules")
         self.btn_rules.setStyleSheet("background-color: #1e1e26; border: 1px solid #333342; font-size: 11px; font-weight: bold; padding: 4px 10px;")
         self.btn_rules.clicked.connect(self.on_open_rules_dialog)
 
-        row_top.addWidget(self.provider_combo, 1)
         row_top.addWidget(self.mode_combo, 1)
+        row_top.addWidget(self.btn_api_settings, 1)
         row_top.addWidget(self.btn_rules, 1)
         lay.addLayout(row_top)
+
+        self.api_summary = QLabel("")
+        self.api_summary.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 9px;")
+        self.api_summary.setWordWrap(True)
+        lay.addWidget(self.api_summary)
 
         # Extended Language Selectors
         row_lang = QHBoxLayout()
@@ -546,39 +721,6 @@ class TranslatorPanel(QWidget):
         row_lang.addWidget(self.tgt_lang_combo, 1)
         lay.addLayout(row_lang)
 
-        self.chk_lan_mode = QCheckBox("LAN Mode (Localhost:11434)")
-        self.chk_lan_mode.setStyleSheet("color: #00d2ff; font-weight: bold; font-size: 10px;")
-        self.chk_lan_mode.setChecked(True)
-        self.chk_lan_mode.toggled.connect(self._on_lan_mode_toggled)
-        lay.addWidget(self.chk_lan_mode)
-
-        row_primary = QHBoxLayout()
-        self.primary_input = QLineEdit()
-        self.primary_input.editingFinished.connect(self._save_session_credentials)
-
-        self.btn_connect = QPushButton("🔄 Connect")
-        self.btn_connect.setStyleSheet("background-color: #1b1b24; border: 1px solid #00d2ff; color: #00d2ff; font-weight: bold; padding: 4px 10px;")
-        self.btn_connect.clicked.connect(self.on_test_connection_and_fetch_models)
-
-        row_primary.addWidget(self.primary_input, 1)
-        row_primary.addWidget(self.btn_connect)
-        lay.addLayout(row_primary)
-
-        self.secondary_input = QLineEdit()
-        self.secondary_input.setPlaceholderText("Enter Cloud API Key...")
-        self.secondary_input.setEchoMode(QLineEdit.Password)
-        self.secondary_input.editingFinished.connect(self._save_session_credentials)
-        lay.addWidget(self.secondary_input)
-
-        row_model = QHBoxLayout()
-        lbl_model = QLabel("Model:")
-        lbl_model.setStyleSheet(f"color: {Config.COLOR_TEXT_DIM}; font-size: 10px;")
-        self.model_combo = QComboBox()
-        self.model_combo.currentIndexChanged.connect(self._save_session_credentials)
-        row_model.addWidget(lbl_model)
-        row_model.addWidget(self.model_combo, 1)
-        lay.addLayout(row_model)
-
         self.lbl_token_counter = QLabel("⚡ Est. Tokens: ~1,450 (Text: ~330 | Img: ~1,120)")
         self.lbl_token_counter.setStyleSheet("color: #00d4ff; font-size: 9px; font-weight: bold;")
         lay.addWidget(self.lbl_token_counter)
@@ -592,6 +734,7 @@ class TranslatorPanel(QWidget):
         self.lbl_api_status = QLabel("")
         self.lbl_api_status.setStyleSheet("font-size: 10px; font-weight: bold; padding: 2px;")
         self.lbl_api_status.setAlignment(Qt.AlignCenter)
+        self.lbl_api_status.setWordWrap(True)
         self.lbl_api_status.setVisible(False)
         lay.addWidget(self.lbl_api_status)
 
@@ -678,99 +821,32 @@ class TranslatorPanel(QWidget):
         self.lbl_script_status.setWordWrap(True)
         lay.addWidget(self.lbl_script_status)
 
-        self._update_fields_for_provider()
+        self._refresh_api_summary()
 
-    def _update_fields_for_provider(self):
-        """
-        Dynamically adapts UI fields based on provider schema requirements
-        without hardcoded if/else statements for specific engines.
-        """
-        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-        provider = AIClientManager.get_provider(provider_id)
-        creds = self.cred_manager.get_provider_credentials(provider_id)
-
-        self.primary_input.blockSignals(True)
-        self.secondary_input.blockSignals(True)
-        self.model_combo.blockSignals(True)
-
-        # 1. LAN / Local Mode visibility
-        has_lan = getattr(provider, "has_lan_mode", False)
-        self.chk_lan_mode.setVisible(has_lan)
-        is_lan = has_lan and self.chk_lan_mode.isChecked()
-
-        requires_endpoint = getattr(provider, "requires_endpoint", False)
-        is_secret = getattr(provider, "is_primary_secret", True)
-        primary_placeholder = getattr(provider, "primary_placeholder", "Enter API Key...")
-        secondary_placeholder = getattr(provider, "secondary_placeholder", "Enter Cloud Token...")
-        default_endpoint = getattr(provider, "default_endpoint", "http://localhost:11434")
-
-        # 2. Dynamic Input Fields Configuration
-        if is_lan:
-            self.primary_input.setText(default_endpoint)
-            self.primary_input.setEnabled(False)
-            self.primary_input.setPlaceholderText("Localhost Endpoint")
-            self.primary_input.setEchoMode(QLineEdit.Normal)
-            self.secondary_input.setVisible(False)
-            self.secondary_input.setEnabled(False)
-        else:
-            self.primary_input.setEnabled(True)
-            self.primary_input.setPlaceholderText(primary_placeholder)
-            self.primary_input.setEchoMode(QLineEdit.Password if is_secret else QLineEdit.Normal)
-
-            if requires_endpoint:
-                self.primary_input.setText(creds.get("url", primary_placeholder))
-                self.secondary_input.setVisible(True)
-                self.secondary_input.setEnabled(True)
-                self.secondary_input.setPlaceholderText(secondary_placeholder)
-                self.secondary_input.setText(creds.get("token", ""))
-            else:
-                self.primary_input.setText(creds.get("key", ""))
-                self.secondary_input.setVisible(False)
-                self.secondary_input.setEnabled(False)
-
-        # 3. Dynamic Models List
-        self.model_combo.clear()
-        default_models = getattr(provider, "default_models", [])
-        models_list = creds.get("models_list", default_models)
-        if models_list:
-            self.model_combo.addItems(models_list)
-        selected_model = creds.get("model", "")
-        if selected_model and self.model_combo.findText(selected_model) >= 0:
-            self.model_combo.setCurrentText(selected_model)
-
-        self.primary_input.blockSignals(False)
-        self.secondary_input.blockSignals(False)
-        self.model_combo.blockSignals(False)
-
-    def _on_lan_mode_toggled(self, checked: bool):
-        self._update_fields_for_provider()
-        self._save_session_credentials()
-
-    def _on_provider_change(self):
-        self._update_fields_for_provider()
-        self._save_session_credentials()
-
-    def set_locked(self, locked: bool):
+    def set_locked(self, locked: bool, status_text: str = "", allow_audit: bool = False):
         """
         Locks or unlocks all configuration controls, settings, and editor panels 
         to ensure data consistency during active inference or batch jobs.
         """
         # Section 1: Engine, Models, Rules & Languages
-        self.provider_combo.setEnabled(not locked)
         self.mode_combo.setEnabled(not locked)
+        self.btn_api_settings.setEnabled(not locked)
         self.btn_rules.setEnabled(not locked)
         self.src_lang_combo.setEnabled(not locked)
         self.tgt_lang_combo.setEnabled(not locked)
-        self.chk_lan_mode.setEnabled(not locked)
-        self.primary_input.setEnabled(not locked)
-        self.btn_connect.setEnabled(not locked)
-        self.secondary_input.setEnabled(not locked)
-        self.model_combo.setEnabled(not locked)
         self.btn_translate_page.setEnabled(not locked)
 
-        # Section 2: Dialogue editor & variants
-        self.scroll.setEnabled(not locked)
-        self.btn_add_bubble.setEnabled(not locked)
+        # During a batch, keep the editor scrollable and disable edits on queued / active pages.
+        page_blocked = bool(
+            allow_audit
+            and self.mw.is_page_blocked_by_batch(self.mw.current_img_path)
+        )
+        self.scroll.setEnabled(not locked or allow_audit)
+        self.btn_add_bubble.setEnabled(not locked or (allow_audit and not page_blocked))
+        if allow_audit:
+            self.set_page_audit_blocked(page_blocked)
+        elif not locked:
+            self.set_page_audit_blocked(False)
 
         # Section 3: Script file hierarchy
         self.combo_series_folder.setEnabled(not locked)
@@ -781,79 +857,83 @@ class TranslatorPanel(QWidget):
         self.btn_load_txt.setEnabled(not locked)
 
         if locked:
-            self.lbl_api_status.setText("🔒 LOCKED: Inference engine busy...")
+            self.lbl_api_status.setText(status_text or "⏳ Preparing translation request...")
             self.lbl_api_status.setStyleSheet("color: #00d2ff; font-size: 10px; font-weight: bold; padding: 2px;")
             self.lbl_api_status.setVisible(True)
-            if self.mw.current_img_path:
+            if self.mw.current_img_path and not allow_audit:
                 self.mw.file_list.update_item_state(self.mw.current_img_path, "lock", "Translating in progress...")
 
-    def on_test_connection_and_fetch_models(self):
-        """Triggers asynchronous connection validation and model retrieval."""
-        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-        provider_engine = AIClientManager.get_provider(provider_id)
+    def set_page_audit_blocked(self, blocked: bool):
+        """Block edits while keeping the dialogue list scrollable during a batch."""
+        self.scroll.setEnabled(True)
+        self.btn_add_bubble.setEnabled(not blocked)
+        for card in self.current_bubbles_widgets:
+            for attribute in ("orig_edit", "line_edit", "variant_combo", "delete_button"):
+                widget = getattr(card, attribute, None)
+                if widget is not None:
+                    widget.setEnabled(not blocked)
 
-        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
-        has_lan = getattr(provider_engine, "has_lan_mode", False)
-
-        if requires_endpoint:
-            if has_lan and self.chk_lan_mode.isChecked():
-                key_or_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
-                auth_token = ""
-            else:
-                key_or_url = self.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
-                auth_token = self.secondary_input.text().strip()
-                if not auth_token and not has_lan:
-                    QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} credentials.")
-                    return
+    def show_inference_status(
+        self,
+        image_path: str,
+        batch_position: int = None,
+        batch_total: int = None,
+    ):
+        """Shows request context without claiming access to live model thoughts."""
+        page_name = os.path.basename(image_path)
+        if batch_position is not None and batch_total is not None:
+            progress = f"Page {batch_position}/{batch_total} · {page_name}"
         else:
-            key_or_url = self.primary_input.text().strip()
-            auth_token = ""
-            if not key_or_url:
-                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} API Key.")
-                return
+            progress = f"Page · {page_name}"
 
-        self.btn_connect.setEnabled(False)
-        self.btn_connect.setText("⏳ Checking...")
+        self.lbl_api_status.setText(f"⏳ Model working · {progress}")
+        self._inference_progress = f"⏳ Model working · {progress}"
+        self.lbl_api_status.setStyleSheet(
+            "color: #00d2ff; font-size: 10px; font-weight: bold; padding: 2px;"
+        )
+        self.lbl_api_status.setVisible(True)
 
-        self.fetch_worker = FetchModelsWorker(provider_id, key_or_url, auth_token)
-        self.fetch_worker.finished.connect(self._on_fetch_models_result)
-        self.fetch_worker.start()
+    def update_inference_elapsed(self, elapsed: str, finished: bool = False):
+        """Shows elapsed time in the request status line, without repeating model settings."""
+        progress = getattr(self, "_inference_progress", "⏳ Model working")
+        self.lbl_api_status.setText(f"{progress} · {elapsed}")
+        self.lbl_api_status.setVisible(True)
 
-    def _on_fetch_models_result(self, success: bool, models: list, message: str):
-        """Handles background model fetch worker response."""
-        self.btn_connect.setEnabled(True)
-        self.btn_connect.setText("🔄 Connect")
+    def _set_result_status(self, message: str, color: str):
+        duration = getattr(self.mw, "_last_job_duration", None)
+        if duration is not None:
+            message = f"{message} · {self.mw._format_elapsed(duration)}"
+        self.lbl_api_status.setText(message)
+        self.lbl_api_status.setStyleSheet(
+            f"color: {color}; font-size: 10px; font-weight: bold; padding: 2px;"
+        )
+        self.lbl_api_status.setVisible(True)
 
-        if success:
-            provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-            current_choice = self.model_combo.currentText()
-
-            self.model_combo.blockSignals(True)
-            self.model_combo.clear()
-            self.model_combo.addItems(models)
-            if current_choice and self.model_combo.findText(current_choice) >= 0:
-                self.model_combo.setCurrentText(current_choice)
-            self.model_combo.blockSignals(False)
-
-            self.cred_manager.update_provider_credentials(provider_id, {
-                "model": self.model_combo.currentText(),
-                "models_list": list(models)
-            })
-
-            self._save_session_credentials()
-            QMessageBox.information(self, "Connection Successful", f"{message}\n\nModels ready: {len(models)}")
-        else:
-            QMessageBox.critical(self, "Connection Error", message)
+    def show_status_message(self, message: str, color: str = "#00d2ff"):
+        self.lbl_api_status.setText(message)
+        self.lbl_api_status.setStyleSheet(
+            f"color: {color}; font-size: 10px; font-weight: bold; padding: 2px;"
+        )
+        self.lbl_api_status.setVisible(True)
 
     def on_open_rules_dialog(self):
         """Displays modal dialog for configuring core engine rules and custom lore."""
-        dialog = RulesDialog(self.prompt_manager.user_rules, self.prompt_manager.core_rules, self)
+        dialog = RulesDialog(
+            self.prompt_manager.user_rules,
+            self.prompt_manager.core_rules,
+            self.prompt_manager.options,
+            self,
+            prompt_manager=self.prompt_manager,
+            src_lang=self.src_lang_combo.currentText(),
+            tgt_lang=self.tgt_lang_combo.currentText(),
+            medium=self.mode_combo.currentText(),
+        )
         if dialog.exec() == QDialog.Accepted:
-            new_user, new_core = dialog.get_results()
+            new_user, new_options = dialog.get_results()
             self.prompt_manager.save_user_rules(new_user)
-            self.prompt_manager.save_core_rules(new_core)
+            self.prompt_manager.save_options(new_options)
             self.update_token_estimate()
-            QMessageBox.information(self, "Rules Saved", "User rules and engine technical guidelines were saved to disk.")
+            QMessageBox.information(self, "Rules Saved", "User rules and extraction options were saved to disk.")
 
     def _get_all_project_paths(self) -> list:
         """Retrieves absolute file paths for all images loaded in the project asset list."""
@@ -950,7 +1030,8 @@ class TranslatorPanel(QWidget):
 
     def load_page_state(self, path: str):
         """Populates the dialogue cards for the page currently loaded in the main viewer."""
-        self.update_token_estimate()
+        if not self.show_token_usage(self.page_token_usage.get(path, {})):
+            self.update_token_estimate(path)
         if path in self.page_bubbles_data:
             self.populate_bubble_editor(self.page_bubbles_data[path])
         elif path in self.path_dialogues_map:
@@ -959,6 +1040,8 @@ class TranslatorPanel(QWidget):
             self.populate_bubble_editor(fake_bubbles)
         else:
             self.populate_bubble_editor([])
+        if self.mw.is_batching:
+            self.set_page_audit_blocked(self.mw.is_page_blocked_by_batch(path))
 
     def save_current_page_editor(self):
         """Saves values from the active bubble editor cards into in-memory maps."""
@@ -1002,59 +1085,62 @@ class TranslatorPanel(QWidget):
             QMessageBox.warning(self, "Notice", "Select a page in the left assets list first.")
             return
 
-        provider_id = self.provider_combo.currentData() or self.provider_combo.currentText().lower().strip()
-        provider_engine = AIClientManager.get_provider(provider_id)
-        default_models = getattr(provider_engine, "default_models", [])
-        selected_model = self.model_combo.currentText().strip() or (default_models[0] if default_models else "")
+        api_config = self.get_active_api_config()
+        if not api_config["has_credentials"]:
+            QMessageBox.warning(
+                self,
+                "API credentials required",
+                f"Open API Settings and configure {api_config['provider_name']} before translating.",
+            )
+            return
 
-        api_key = ""
-        endpoint_url = ""
-        token = ""
-
-        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
-        has_lan = getattr(provider_engine, "has_lan_mode", False)
-
-        if requires_endpoint:
-            if has_lan and self.chk_lan_mode.isChecked():
-                endpoint_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
-            else:
-                endpoint_url = self.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
-                token = self.secondary_input.text().strip()
-                if not token and not has_lan:
-                    QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} credentials.")
-                    return
-        else:
-            api_key = self.primary_input.text().strip()
-            if not api_key:
-                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.provider_combo.currentText()} API Key.")
-                return
-
+        request_path = self.mw.current_img_path
+        self.pending_language_pairs[request_path] = self.current_language_pair()
+        system_prompt, request_prompt = self.build_request_prompts(request_path)
+        estimate_prompt = f"{system_prompt}\n\n{request_prompt}"
+        self.update_token_estimate(request_path, estimate_prompt)
         self.set_locked(True)
+        if hasattr(self.mw, "_start_timed_job"):
+            self.mw._start_timed_job("Waiting to send")
+        self.show_inference_status(request_path)
 
         self.active_worker = MultimodalTranslationWorker(
-            image_path=self.mw.current_img_path,
-            full_prompt=self.build_prompt_for(self.mw.current_img_path),
-            provider=provider_id,
-            model_name=selected_model,
-            api_key=api_key,
-            ollama_url=endpoint_url,
-            ollama_token=token
+            image_path=request_path,
+            full_prompt=request_prompt,
+            provider=api_config["provider_id"],
+            model_name=api_config["model"],
+            api_key=api_config["api_key"],
+            ollama_url=api_config["endpoint_url"],
+            ollama_token=api_config["token"],
+            thinking_level=api_config["thinking_level"],
+            system_prompt=system_prompt,
+            usage_profile=api_config["usage_profile"],
+            request_pacing=api_config["request_pacing"],
         )
         self.active_worker.finished.connect(self._on_translation_success)
         self.active_worker.error.connect(self._on_translation_failed)
+        if hasattr(self.mw, "_on_request_started"):
+            self.active_worker.request_started.connect(self.mw._on_request_started)
         self.active_worker.start()
 
     def _on_translation_success(self, path: str, result: TranslationResult):
         """Processes successful inference output, updates item status, and renders editor cards."""
         self.set_locked(False)
+        if hasattr(self.mw, "_finish_timed_job"):
+            self.mw._finish_timed_job("Complete")
 
         status = result.status
         fname = os.path.basename(path)
+        request_language_pair = self.pending_language_pairs.pop(path, None)
+        usage = result.usage or {}
+        self.page_token_usage[path] = usage.copy()
+        if path == self.mw.current_img_path:
+            self.show_token_usage(usage)
+        if hasattr(self.mw, "refresh_usage_summary"):
+            self.mw.refresh_usage_summary()
 
         if status == ProviderStatus.SAFETY_BLOCKED:
-            self.lbl_api_status.setText("🛡 Blocked by Content Moderation")
-            self.lbl_api_status.setStyleSheet("color: #ff3344; font-size: 10px; font-weight: bold; padding: 2px;")
-            self.lbl_api_status.setVisible(True)
+            self._set_result_status("🛡 Blocked by Content Moderation", "#ff3344")
             self.mw.file_list.update_item_state(path, "safety", result.message)
             QMessageBox.warning(
                 self,
@@ -1067,44 +1153,29 @@ class TranslatorPanel(QWidget):
             return
 
         if status == ProviderStatus.SERVER_BUSY:
-            self.lbl_api_status.setText("⏳ Provider Busy / Overloaded")
-            self.lbl_api_status.setStyleSheet("color: #ffd600; font-size: 10px; font-weight: bold; padding: 2px;")
-            self.lbl_api_status.setVisible(True)
+            self._set_result_status("⏳ Provider Busy / Overloaded", "#ffd600")
             self.mw.file_list.update_item_state(path, "busy", result.message)
             QMessageBox.warning(self, "Server Busy", f"{result.message}\n\nPlease retry in a couple of minutes.")
             return
 
         if status == ProviderStatus.EMPTY:
-            self.lbl_api_status.setText("💬 Silent Page (No text detected)")
-            self.lbl_api_status.setStyleSheet("color: #8faecf; font-size: 10px; font-weight: bold; padding: 2px;")
-            self.lbl_api_status.setVisible(True)
+            self._set_result_status("💬 Silent Page (No text detected)", "#8faecf")
             self.page_bubbles_data[path] = []
+            self.page_language_pairs.pop(path, None)
             self.path_dialogues_map.pop(path, None)
             self.mw.file_list.update_item_state(path, "empty", result.message or "Silent panel (No text detected)")
             self.populate_bubble_editor([])
             return
 
         if status == ProviderStatus.ERROR:
-            self.lbl_api_status.setText("✖ Translation error")
-            self.lbl_api_status.setStyleSheet("color: #ff5252; font-size: 10px; font-weight: bold; padding: 2px;")
-            self.lbl_api_status.setVisible(True)
+            self._set_result_status("✖ Translation error", "#ff5252")
             self.mw.file_list.update_item_state(path, "error", result.message or "Translation failed")
             QMessageBox.critical(self, "Translation Error", f"Failed to translate {fname}:\n{result.message}")
             return
 
         # Inference successful
-        self.lbl_api_status.setText("✔ Translation generated successfully")
-        self.lbl_api_status.setStyleSheet("color: #00e676; font-size: 10px; font-weight: bold; padding: 2px;")
-        self.lbl_api_status.setVisible(True)
-
-        usage = result.usage
-        p_tok = usage.get("prompt_tokens", 0)
-        c_tok = usage.get("output_tokens", 0)
-        t_tok = usage.get("total_tokens", p_tok + c_tok)
-        if t_tok > 0:
-            self.lbl_token_counter.setText(
-                f"⚡ Input: {p_tok:,} | Output: {c_tok:,} | Total: {t_tok:,} tokens"
-            )
+        self.page_language_pairs[path] = request_language_pair or self.current_language_pair()
+        self._set_result_status("✔ Translation generated successfully", "#00e676")
 
         self.page_bubbles_data[path] = result.bubbles
         self.path_dialogues_map[path] = [b.get("direct") for b in result.bubbles if b.get("direct")]
@@ -1116,9 +1187,10 @@ class TranslatorPanel(QWidget):
     def _on_translation_failed(self, path: str, error_msg: str):
         """Handles unhandled worker thread exceptions."""
         self.set_locked(False)
-        self.lbl_api_status.setText("✖ Translation failed")
-        self.lbl_api_status.setStyleSheet("color: #ff5252; font-size: 10px; font-weight: bold; padding: 2px;")
-        self.lbl_api_status.setVisible(True)
+        if hasattr(self.mw, "_finish_timed_job"):
+            self.mw._finish_timed_job("Failed")
+        self.pending_language_pairs.pop(path, None)
+        self._set_result_status("✖ Translation failed", "#ff5252")
         self.mw.file_list.update_item_state(path, "error", error_msg[:60])
         QMessageBox.critical(self, "Translation Error", f"Failed to translate {os.path.basename(path)}:\n{error_msg}")
 
@@ -1170,6 +1242,7 @@ class TranslatorPanel(QWidget):
         btn_del.setFixedSize(20, 20)
         btn_del.setStyleSheet("background-color: #331518; color: #ff5566; font-weight: bold; border: 1px solid #551e22; border-radius: 2px;")
         btn_del.clicked.connect(lambda: self._remove_bubble_card(card))
+        card.delete_button = btn_del
 
         row_head.addWidget(lbl_num)
         row_head.addStretch()
@@ -1195,6 +1268,13 @@ class TranslatorPanel(QWidget):
             lbl_en = QLabel(f"🔊 EN: {sfx_en}")
             lbl_en.setStyleSheet("color: #ffb74d; font-size: 10px; font-weight: bold;")
             card_lay.addWidget(lbl_en)
+
+        sfx_meaning = (b.get("sfx_meaning") or "").strip()
+        if card.b_type == "sfx" and sfx_meaning:
+            lbl_meaning = QLabel(f"💡 Meaning: {sfx_meaning}")
+            lbl_meaning.setStyleSheet("color: #b6a7ff; font-size: 10px; font-style: italic;")
+            lbl_meaning.setWordWrap(True)
+            card_lay.addWidget(lbl_meaning)
 
         subtext = b.get("subtext", "").strip()
         if subtext:
@@ -1245,6 +1325,7 @@ class TranslatorPanel(QWidget):
 
         if options_dict:
             card_lay.addWidget(combo)
+            card.variant_combo = combo
         card_lay.addWidget(line_edit)
 
         if hasattr(self, "_bottom_spacer") and self._bottom_spacer:
@@ -1387,6 +1468,8 @@ class TranslatorPanel(QWidget):
 
             for p in resolved:
                 self.page_bubbles_data.pop(p, None)
+                self.page_token_usage.pop(p, None)
+                self.page_language_pairs.pop(p, None)
                 self.mw.file_list.update_item_state(p, "modified", "Imported from script")
 
             self.lbl_script_status.setText(f"Loaded: {os.path.basename(open_path)}")

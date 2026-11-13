@@ -30,11 +30,14 @@ class TranslationResult:
     usage: dict = field(default_factory=lambda: {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0})
     message: str = ""
     raw_error: str = ""
+    debug_response: dict = field(default_factory=dict, repr=False)
 
 
 class DailyQuotaExceeded(Exception):
     """Raised when an API provider completely exhausts its daily request limit (RPD)."""
-    pass
+    def __init__(self, message: str, request_count: int = 1):
+        super().__init__(message)
+        self.request_count = max(1, int(request_count))
 
 
 class BaseAIProvider(ABC):
@@ -66,7 +69,9 @@ class BaseAIProvider(ABC):
         model: str,
         api_key: str = "",
         endpoint_url: str = "",
-        token: str = ""
+        token: str = "",
+        thinking_level: str = "minimal",
+        system_prompt: str = "",
     ) -> TranslationResult:
         """Sends multimodal payload and returns standardized TranslationResult."""
         pass
@@ -127,6 +132,19 @@ class BaseAIProvider(ABC):
             for k in ("direct", "formal", "aggressive", "natural"):
                 if k in b and b[k]:
                     b[k] = " ".join(str(b[k]).split())
+
+            # Suppress variants that repeat the direct translation verbatim.
+            direct_norm = " ".join(str(b.get("direct", "")).split()).casefold()
+            if direct_norm:
+                for k in ("formal", "aggressive", "natural"):
+                    if b.get(k) and b[k].casefold() == direct_norm:
+                        b[k] = ""
+
+            sfx_meaning = b.get("sfx_meaning")
+            if b_type == "sfx" and isinstance(sfx_meaning, str) and sfx_meaning.strip():
+                b["sfx_meaning"] = " ".join(sfx_meaning.split())
+            else:
+                b.pop("sfx_meaning", None)
 
             cleaned.append(b)
 

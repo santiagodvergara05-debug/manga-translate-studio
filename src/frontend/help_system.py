@@ -1,5 +1,4 @@
 from PySide6.QtWidgets import QDialog, QVBoxLayout, QTabWidget, QTextEdit, QPushButton
-from src.utils.system_info import SystemMonitor
 from src.utils.config import Config
 
 # /////////////////////////////////#
@@ -31,7 +30,8 @@ class HelpSystem(QDialog):
             "<table border='0' cellpadding='5' width='100%'>"
             "<tr><td colspan='2'><b style='color: #00d4ff;'>— Viewport Navigation —</b></td></tr>"
             "<tr><td width='35%'><b>Hold [Space] + Drag</b></td><td>Smooth panning across the page canvas.</td></tr>"
-            "<tr><td><b>Mouse Wheel</b></td><td>Zoom in / Zoom out centered on cursor position.</td></tr>"
+            "<tr><td><b>Mouse Wheel</b></td><td>Scroll vertically through tall pages.</td></tr>"
+            "<tr><td><b>[Ctrl] + Mouse Wheel</b></td><td>Zoom in / out centered on the cursor.</td></tr>"
             "<tr><td><b>[M]</b></td><td>Pan Tool toggle.</td></tr>"
             "<tr><td colspan='2'><hr color='#252530'></td></tr>"
             "<tr><td colspan='2'><b style='color: #00d4ff;'>— Page State & Assets —</b></td></tr>"
@@ -69,7 +69,53 @@ class HelpSystem(QDialog):
         )
 
         # ==========================================
-        # TAB 3: VISUAL STATUS CODES & ICONS
+        # TAB 3: THINKING LEVELS & TOKEN IMPACT
+        # ==========================================
+        tab_thinking = QTextEdit()
+        tab_thinking.setReadOnly(True)
+        tab_thinking.setHtml(
+            "<h3 style='color: #00d4ff;'>🧠 Thinking Levels & Token Impact</h3>"
+            "<h4>Thinking levels</h4>"
+            "<ul>"
+            "<li>The <b>Thinking level</b> setting is sent with Gemini requests when the selected model supports it. Available levels depend on the model ID; unsupported levels are not sent.</li>"
+            "<li><b>Minimal</b> uses less reasoning where supported; it does not always mean zero thinking. <b>High</b> can improve difficult visual interpretation, but may add latency and many thinking tokens. Usage varies by page and model.</li>"
+            "<li><b>Gemma 4</b> exposes two modes: Minimal (thinking off) and High (thinking on). Other models may have different levels or use their own default.</li>"
+            "<li>The status under the Translate button shows the <i>configured</i> level. This app uses a non-streaming request, so it cannot show live thinking progress.</li>"
+            "<li><b>R19 vocalization mode</b> adds prompt guidance to distinguish breathy vocalizations from laughter using artwork context. It is off by default and does not add JSON fields.</li>"
+            "</ul>"
+            "<h4>Reading token usage</h4>"
+            "<ul>"
+            "<li><b>Input tokens:</b> prompt instructions, the current page image, and any previous-page dialogue context.</li>"
+            "<li><b>Output tokens:</b> extracted text and requested translation fields.</li>"
+            "<li><b>Thinking tokens:</b> reasoning usage reported by the provider. High levels can increase this substantially. Provider pricing and free quotas differ.</li>"
+            "<li>Batch continuity sends only up to three text pairs from the immediately previous page; it does <b>not</b> resend earlier images.</li>"
+            "</ul>"
+            "<h4>Extraction option indicators</h4>"
+            "<p><b>⬆</b> can add response tokens when the page contains that content. <b>⬇</b> indicates an option that can reduce tokens when disabled. These are qualitative hints, not fixed token counts.</p>"
+            "<ul>"
+            "<li><b>Sound effects, narration, and floating text:</b> including them can add detected entries; disabling them can reduce the prompt and output when such text is present.</li>"
+            "<li><b>Translation variants:</b> adds formal, aggressive, and natural fields. This can increase the response, especially when alternatives are generated. Disable it for direct translations only.</li>"
+            "<li><b>Subtext:</b> adds an optional tone-note field. A note uses extra output tokens; disabling it removes that field. Subtext is for editor guidance and is not written to the translation .TXT.</li>"
+            "<li><b>Explain sound-effect meaning:</b> adds a concise target-language meaning note to SFX cards only. It requires SFX extraction, adds output tokens for SFX, and is not written to the .TXT.</li>"
+            "<li><b>R19 vocalization mode:</b> adds a small amount of prompt text but no response field. It guides short vocalizations; the model may still interpret ambiguous lettering differently.</li>"
+            "</ul>"
+            "<h4>Usage, cache, and price tables</h4>"
+            "<ul>"
+            "<li>The <b>Usage / Prices</b> button opens request history and editable USD-per-million-token prices.</li>"
+            "<li>Usage history can be filtered by provider and usage group. <b>Clear all history</b> removes request records for every provider but keeps price tables and Gemini RPD counters.</li>"
+            "<li>Import and export price rows as JSON. Imports merge by provider, model, and plan: matching rows are updated and unrelated rows are kept, so you can import several provider files. The community JSON files are in <code>Pricing_Models_Providers</code>. Prices are snapshots; check provider rates before relying on an estimate.</li>"
+            "<li>New installations start with an empty price table and Gemini RPD limit set to 0 (meter off). <b>Not configured</b> means the app has no price rate to estimate against; add values from your provider's pricing source.</li>"
+            "<li>API Settings has saved <b>Connection profiles</b> that switch provider credentials and model together. The separate optional <b>Usage group</b> combines usage history and Gemini RPD values for keys sharing one account or project; leave it blank to track by an automatic credential fingerprint.</li>"
+            "<li>The main header's <b>API pace</b> selector applies to single and batch translations for every provider. <b>LOW</b> waits at least 4.1 seconds between requests per provider (under 15 RPM); <b>HIGH</b> waits at least 1.5 seconds. Provider retry backoff may add more delay.</li>"
+            "<li>Cache counts and percentages come from provider response metadata. A zero means that request reported no cached input; it does not identify why a cache miss occurred.</li>"
+            "<li>When Gemini is selected, the main header shows editable <b>RPD limit</b> and <b>RPD in use</b> fields. Set the limit to 0 to turn off the local meter. MTS increments RPD in use for each recorded Gemini request; usage resets at midnight Pacific time while the limit is kept. If usage exceeds a nonzero limit, the header shows an inline red warning.</li>"
+            "</ul>"
+            "<p style='color: #9aa0ad;'><i>Actual token use and costs depend on the image, selected options, model, cache hit, account tier, and the price rows currently loaded.</i></p>"
+            "<p><b>Developer console:</b> when debug logging is enabled, the API response may include text marked as thought and opaque signature metadata. These are diagnostics, not translation text, and are not written to the .TXT script.</p>"
+        )
+
+        # ==========================================
+        # TAB 4: VISUAL STATUS CODES & ICONS
         # ==========================================
         tab_status = QTextEdit()
         tab_status.setReadOnly(True)
@@ -89,7 +135,7 @@ class HelpSystem(QDialog):
         )
 
         # ==========================================
-        # TAB 4: SCRIPT ENGINE & FILE STRUCTURE
+        # TAB 5: SCRIPT ENGINE & FILE STRUCTURE
         # ==========================================
         tab_script = QTextEdit()
         tab_script.setReadOnly(True)
@@ -107,46 +153,29 @@ class HelpSystem(QDialog):
         )
 
         # ==========================================
-        # TAB 5: BATCH ORCHESTRATION & CADENCE
+        # TAB 6: BATCH ORCHESTRATION & CADENCE
         # ==========================================
         tab_batch = QTextEdit()
         tab_batch.setReadOnly(True)
         tab_batch.setHtml(
-            "<h3 style='color: #00d4ff;'>⚡ Batch Orchestration & Rate Limits</h3>"
+            "<h3 style='color: #00d4ff;'>⚡ Batch Orchestration & Request Pacing</h3>"
             "<h4>Execution Flow & Safeguards</h4>"
             "<ul>"
-            "<li><b>Pacing Controls (RPM):</b> Automatic request throttling protects against hitting provider rate limits (Gemini: 15 RPM).</li>"
+            "<li><b>Request pacing:</b> The app uses conservative intervals between requests. This does not change provider-side limits or enforcement.</li>"
+            "<li><b>Batch review:</b> The selected image stays in place as the queue advances. Completed pages can be opened and edited during the run; queued and currently processing pages stay locked. Scroll the editor and image while the batch runs.</li>"
             "<li><b>Session Isolation:</b> Every page request is dispatched statelessly without accumulating conversation history, eliminating token overflow crashes.</li>"
             "<li><b>Daily Quota Interruption (RPD):</b> When a daily limit is reached, batch execution safely halts, preserving remaining unparsed pages for effortless resumption.</li>"
             "<li><b>Automatic Retry Targeting:</b> If tasks fail or encounter busy servers, they remain checked in the assets list for immediate re-execution.</li>"
             "</ul>"
         )
 
-        # ==========================================
-        # TAB 6: SYSTEM SPECS & RUNTIME TELEMETRY
-        # ==========================================
-        specs = SystemMonitor.get_detailed_specs()
-        tab_hardware = QTextEdit()
-        tab_hardware.setReadOnly(True)
-        tab_hardware.setHtml(
-            "<h3 style='color: #00d4ff;'>💻 Runtime Diagnostics & Optimization</h3>"
-            f"<p><b>Inference Target:</b> {specs.get('engine', 'CPU / Remote API')}</p>"
-            f"<p><b>Total System Memory:</b> {specs.get('ram', 'N/A')} GB</p>"
-            "<hr color='#252530'>"
-            "<h4>Memory Management Features</h4>"
-            "<ul>"
-            "<li><b>Lazy Image Decoding:</b> Images decode via OpenCV only when actively loaded into the viewport and are released when navigating away.</li>"
-            "<li><b>Dynamic Payload Compression:</b> High-resolution pages downscale in-memory before Base64 encoding to minimize latency and bandwidth footprint.</li>"
-            "<li><b>Thread Safety:</b> All network interactions execute within isolated worker threads (<code>QThread</code>), ensuring an unblocked and responsive GUI.</li>"
-            "</ul>"
-        )
-
         tabs.addTab(tab_shortcuts, "Navigation")
-        tabs.addTab(tab_ai, "AI & Safety")
-        tabs.addTab(tab_status, "Status Icons")
-        tabs.addTab(tab_script, "Script (.TXT)")
-        tabs.addTab(tab_batch, "Batch Engine")
-        tabs.addTab(tab_hardware, "System")
+        tabs.addTab(tab_ai, "Vision AI")
+        tabs.addTab(tab_thinking, "Thinking & Usage")
+        tabs.addTab(tab_status, "Page Status")
+        tabs.addTab(tab_script, "TXT Scripts")
+        tabs.addTab(tab_batch, "Batch & API Pace")
+
         layout.addWidget(tabs)
 
         close_btn = QPushButton("CLOSE")

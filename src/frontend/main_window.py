@@ -2,7 +2,7 @@
 Main application controller and primary window orchestration.
 
 Manages layout components, asynchronous batch translation queues, rate limiting,
-system telemetry updates, and bidirectional synchronization with the canvas and translation engine.
+provider usage summaries, and bidirectional synchronization with the canvas and translation engine.
 """
 
 import os
@@ -15,25 +15,23 @@ from enum import Enum, auto
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
-    QMessageBox, QGraphicsView, QProgressBar, QCheckBox
+    QMessageBox, QGraphicsView, QProgressBar, QCheckBox, QDialog,
+    QLineEdit, QComboBox,
 )
 from PySide6.QtCore import Qt, QTimer, QThread
-from PySide6.QtGui import QCloseEvent
+from PySide6.QtGui import QCloseEvent, QIntValidator
 
-from src.frontend.widgets import FileListWidget, HardwareMonitor
+from src.frontend.widgets import FileListWidget
 from src.frontend.canvas import MangaCanvas
 from src.frontend.help_system import HelpSystem
-from src.utils.system_info import SystemMonitor
 from src.utils.config import Config
 from src.utils.logger import logger
 from src.backend.translator import TranslatorPanel, TranslationScriptEngine
-from src.backend.ai_client import MultimodalTranslationWorker, AIClientManager
+from src.backend.ai_client import MultimodalTranslationWorker
 from src.backend.providers.base_provider import ProviderStatus, TranslationResult
 from src.frontend.project_reset import ProjectResetController
-
-# Minimum interval between request starts to respect API rate limits (Gemini: 15 RPM = 4s + margin)
-MIN_INTERVAL = {"gemini": 4.5, "ollama": 0.5}
-
+from src.backend.usage_manager import UsageManager
+from src.frontend.usage_pricing import UsagePricingDialog
 
 # /////////////////////////////////#
 #          PAGE STATE ENUM         #
@@ -62,13 +60,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"{Config.APP_NAME} v{Config.VERSION} - Script Generator")
         self.resize(1420, 860)
 
-        self.monitor = SystemMonitor()
+        self.usage_manager = UsageManager()
+        self._rpd_view_key = None
         
         # Batch Processing Management (AI Inference Queue)
         self.worker_thread = None
         self.worker = None
         self.is_batching = False
         self.is_paused = False
+        self._active_batch_path = None
         self.batch_queue = []
         self.total_batch_tasks = 0
         self.completed_batch_tasks = 0
@@ -77,7 +77,10 @@ class MainWindow(QMainWindow):
         # Execution flow & cadence control
         self.stop_requested = False
         self.stop_reason = None           # None | "user" | "quota"
-        self._last_request_ts = 0.0
+        self._request_status = "Ready"
+        self._header_info = ""
+        self._job_started_at = None
+        self._last_job_duration = None
 
         # Viewport navigation state
         self.is_space_moving = False
@@ -89,10 +92,13 @@ class MainWindow(QMainWindow):
 
         self.init_ui()
 
-        # Telemetry refresh timer
+        # Provider usage summary refresh timer
         self.timer = QTimer()
-        self.timer.timeout.connect(self.update_telemetry)
+        self.timer.timeout.connect(self.refresh_usage_summary)
         self.timer.start(2000)
+        self.elapsed_timer = QTimer(self)
+        self.elapsed_timer.setInterval(1000)
+        self.elapsed_timer.timeout.connect(self._update_elapsed_display)
         logger.info("--- MANGA TRANSLATE STUDIO INTERFACE READY ---")
 
     def init_ui(self):
@@ -120,7 +126,52 @@ class MainWindow(QMainWindow):
         self.btn_reset.setFixedSize(65, 30)
         self.btn_reset.clicked.connect(self.on_project_reset_requested)
 
-        self.hw_mon = HardwareMonitor()
+        self.lbl_usage_summary = QLabel("AI USAGE: loading…")
+        self.lbl_usage_summary.setStyleSheet("color: #00d4ff; font-size: 10px; font-weight: bold;")
+        self.lbl_usage_summary.setMaximumWidth(350)
+        self.lbl_usage_summary.setWordWrap(True)
+
+        self.request_pacing_combo = QComboBox()
+        self.request_pacing_combo.addItem("LOW", "low")
+        self.request_pacing_combo.addItem("HIGH", "high")
+        self.request_pacing_combo.setFixedWidth(78)
+        self.request_pacing_combo.setToolTip(
+            "LOW: at least 4.1 seconds between requests per provider (under 15 RPM). "
+            "HIGH: at least 1.5 seconds. Applies to single-page and batch translations."
+        )
+
+        self.rpd_panel = QWidget()
+        rpd_layout = QVBoxLayout(self.rpd_panel)
+        rpd_layout.setContentsMargins(0, 0, 0, 0)
+        rpd_layout.setSpacing(1)
+        rpd_fields = QHBoxLayout()
+        rpd_fields.setContentsMargins(0, 0, 0, 0)
+        rpd_fields.setSpacing(5)
+        self.txt_rpd_limit = QLineEdit("0")
+        self.txt_rpd_used = QLineEdit("0")
+        for field in (self.txt_rpd_limit, self.txt_rpd_used):
+            field.setValidator(QIntValidator(0, 2_147_483_647, field))
+            field.setFixedWidth(54)
+            field.setFixedHeight(22)
+            field.setAlignment(Qt.AlignCenter)
+            field.setFocusPolicy(Qt.ClickFocus)
+            field.setStyleSheet("background: #0b0b0e; border: 1px solid #333342; padding: 1px;")
+            field.editingFinished.connect(self._save_gemini_rpd_fields)
+            field.textChanged.connect(self._refresh_gemini_rpd_status)
+        rpd_fields.addWidget(QLabel("RPD limit"))
+        rpd_fields.addWidget(self.txt_rpd_limit)
+        rpd_fields.addWidget(QLabel("RPD in use"))
+        rpd_fields.addWidget(self.txt_rpd_used)
+        rpd_layout.addLayout(rpd_fields)
+        self.lbl_rpd_status = QLabel()
+        self.lbl_rpd_status.setStyleSheet("color: #00e676; font-size: 9px; font-weight: bold;")
+        rpd_layout.addWidget(self.lbl_rpd_status)
+        self.rpd_panel.setVisible(False)
+
+        self.btn_usage = QPushButton("USAGE / PRICES")
+        self.btn_usage.setFixedHeight(30)
+        self.btn_usage.setToolTip("View request history and editable provider prices.")
+        self.btn_usage.clicked.connect(self.open_usage_pricing)
 
         btn_help = QPushButton("HELP")
         btn_help.setFixedSize(50, 30)
@@ -132,7 +183,11 @@ class MainWindow(QMainWindow):
 
         nav_lay.addWidget(title)
         nav_lay.addStretch()
-        nav_lay.addWidget(self.hw_mon)
+        nav_lay.addWidget(QLabel("API pace"))
+        nav_lay.addWidget(self.request_pacing_combo)
+        nav_lay.addWidget(self.lbl_usage_summary)
+        nav_lay.addWidget(self.rpd_panel)
+        nav_lay.addWidget(self.btn_usage)
         nav_lay.addSpacing(10)
         nav_lay.addWidget(btn_help)
         nav_lay.addWidget(self.btn_open)
@@ -222,6 +277,10 @@ class MainWindow(QMainWindow):
         rp_lay.setSpacing(6)
 
         self.translator_page = TranslatorPanel(self)
+        pacing = str(self.translator_page.cred_manager.data.get("request_pacing", "low")).lower()
+        pacing_index = self.request_pacing_combo.findData(pacing)
+        self.request_pacing_combo.setCurrentIndex(pacing_index if pacing_index >= 0 else 0)
+        self.request_pacing_combo.currentIndexChanged.connect(self._request_pacing_changed)
         rp_lay.addWidget(self.translator_page, 1)
 
         # Styled dark cyan progress bar
@@ -261,7 +320,22 @@ class MainWindow(QMainWindow):
         self.btn_reset.setEnabled(not locked)
         self.btn_save_all_txt.setEnabled(not locked)
         self.chk_all.setEnabled(not locked)
-        self.translator_page.set_locked(locked)
+        self.translator_page.set_locked(locked, allow_audit=locked)
+        self._update_current_page_audit_lock()
+
+    def is_page_blocked_by_batch(self, path: str) -> bool:
+        """True for queued or currently translating pages during a batch."""
+        return bool(
+            self.is_batching
+            and path
+            and (path == self._active_batch_path or path in self.batch_queue)
+        )
+
+    def _update_current_page_audit_lock(self):
+        if hasattr(self, "translator_page") and self.is_batching:
+            self.translator_page.set_page_audit_blocked(
+                self.is_page_blocked_by_batch(self.current_img_path)
+            )
 
     def on_project_reset_requested(self):
         """Prevents project wipe when inference processes are actively running."""
@@ -316,21 +390,14 @@ class MainWindow(QMainWindow):
         if self.file_list.count() == 0:
             return
 
-        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
-        provider_engine = AIClientManager.get_provider(provider_id)
-
-        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
-        has_lan = getattr(provider_engine, "has_lan_mode", False)
-
-        if not requires_endpoint:
-            if not self.translator_page.primary_input.text().strip():
-                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.translator_page.provider_combo.currentText()} API Key.")
-                return
-        else:
-            is_lan = has_lan and self.translator_page.chk_lan_mode.isChecked()
-            if not is_lan and not self.translator_page.secondary_input.text().strip():
-                QMessageBox.warning(self, "API Key Required", f"Please enter your {self.translator_page.provider_combo.currentText()} Cloud API Key.")
-                return
+        api_config = self.translator_page.get_active_api_config()
+        if not api_config["has_credentials"]:
+            QMessageBox.warning(
+                self,
+                "API credentials required",
+                f"Open API Settings and configure {api_config['provider_name']} before starting a batch.",
+            )
+            return
 
         all_paths = [self.file_list.item(i).data(Qt.UserRole) for i in range(self.file_list.count())]
         paths = [
@@ -371,10 +438,15 @@ class MainWindow(QMainWindow):
         self.completed_batch_tasks = 0
         self.failed_batch_tasks.clear()
         self.is_batching = True
+        self._active_batch_path = None
         self.is_paused = False
         self.stop_requested = False
         self.stop_reason = None
-        self._last_request_ts = 0.0
+        self._start_timed_job("Waiting to send")
+
+        for path in self.batch_queue:
+            self.page_states[path] = PageState.WAITING
+            self.file_list.update_item_state(path, "waiting", "Queued for batch translation")
 
         # Lock entire UI for configuration safety
         self.set_batch_ui_locked(True)
@@ -389,18 +461,13 @@ class MainWindow(QMainWindow):
 
         self.step_batch_translate()
 
-    def _next_delay_ms(self) -> int:
-        """Calculates sleep duration in milliseconds to enforce provider rate limits."""
-        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
-        wait = MIN_INTERVAL.get(provider_id, 1.0) - (time.monotonic() - self._last_request_ts)
-        return int(max(0.3, wait) * 1000)
-
     def _schedule_next(self):
-        """Schedules execution of the next queued page via single-shot timer."""
+        """Schedules the next page; the worker applies the configured provider pacing."""
         if self.stop_requested or not self.batch_queue:
             self.finalize_batch_translate()
         elif not self.is_paused:
-            QTimer.singleShot(self._next_delay_ms(), self.step_batch_translate)
+            self._set_request_status("Waiting for next page")
+            QTimer.singleShot(0, self.step_batch_translate)
 
     def step_batch_translate(self):
         """Dispatches the next image inference task in a background QThread."""
@@ -411,63 +478,53 @@ class MainWindow(QMainWindow):
         if self.is_paused:
             return
 
+        self._set_request_status("Waiting to send")
+
         target_path = self.batch_queue.pop(0)
-
-        # Synchronize visual selection in viewer
-        for i in range(self.file_list.count()):
-            it = self.file_list.item(i)
-            if it.data(Qt.UserRole) == target_path:
-                self.on_file_clicked(it)
-                break
-
+        self._active_batch_path = target_path
         self.page_states[target_path] = PageState.WAITING
         self.file_list.update_item_state(target_path, "waiting", "Translating in progress...")
+        self._update_current_page_audit_lock()
 
-        provider_id = self.translator_page.provider_combo.currentData() or self.translator_page.provider_combo.currentText().lower().strip()
-        provider_engine = AIClientManager.get_provider(provider_id)
-        default_models = getattr(provider_engine, "default_models", [])
-        selected_model = self.translator_page.model_combo.currentText().strip() or (default_models[0] if default_models else "")
+        api_config = self.translator_page.get_active_api_config()
+        provider_id = api_config["provider_id"]
 
-        api_key = ""
-        endpoint_url = ""
-        token = ""
-
-        requires_endpoint = getattr(provider_engine, "requires_endpoint", False)
-        has_lan = getattr(provider_engine, "has_lan_mode", False)
-
-        if requires_endpoint:
-            if has_lan and self.translator_page.chk_lan_mode.isChecked():
-                endpoint_url = getattr(provider_engine, "default_endpoint", "http://localhost:11434")
-            else:
-                endpoint_url = self.translator_page.primary_input.text().strip() or getattr(provider_engine, "primary_placeholder", "")
-                token = self.translator_page.secondary_input.text().strip()
+        # Keep stable translation rules as the system prefix, and send only page-specific context with the image.
+        if hasattr(self.translator_page, "build_request_prompts"):
+            system_prompt, page_prompt = self.translator_page.build_request_prompts(target_path)
         else:
-            api_key = self.translator_page.primary_input.text().strip()
+            system_prompt, page_prompt = "", self.translator_page.get_full_prompt()
 
-        # Inject continuity context from previous page if applicable
-        if hasattr(self.translator_page, "build_prompt_for"):
-            full_prompt = self.translator_page.build_prompt_for(target_path)
-        else:
-            full_prompt = self.translator_page.get_full_prompt()
-
-        self._last_request_ts = time.monotonic()
+        estimate_prompt = f"{system_prompt}\n\n{page_prompt}" if system_prompt else page_prompt
+        self.translator_page.update_token_estimate(target_path, estimate_prompt)
+        self.translator_page.pending_language_pairs[target_path] = self.translator_page.current_language_pair()
 
         self.worker_thread = QThread()
         self.worker = MultimodalTranslationWorker(
             image_path=target_path,
-            full_prompt=full_prompt,
+            full_prompt=page_prompt,
             provider=provider_id,
-            model_name=selected_model,
-            api_key=api_key,
-            ollama_url=endpoint_url,
-            ollama_token=token
+            model_name=api_config["model"],
+            api_key=api_config["api_key"],
+            ollama_url=api_config["endpoint_url"],
+            ollama_token=api_config["token"],
+            thinking_level=api_config["thinking_level"],
+            system_prompt=system_prompt,
+            usage_profile=api_config["usage_profile"],
+            request_pacing=api_config["request_pacing"],
         )
         self.worker.moveToThread(self.worker_thread)
         self.worker_thread.started.connect(self.worker.run)
         self.worker.finished.connect(self.on_batch_page_finished)
         self.worker.error.connect(self.on_batch_page_error)
+        self.worker.request_started.connect(self._on_request_started)
         self.worker_thread.finished.connect(self.worker.deleteLater)
         self.worker_thread.finished.connect(self.worker_thread.deleteLater)
+        self.translator_page.show_inference_status(
+            target_path,
+            self.completed_batch_tasks + 1,
+            self.total_batch_tasks,
+        )
         self.worker_thread.start()
 
     def on_batch_page_finished(self, path: str, result: TranslationResult):
@@ -483,14 +540,23 @@ class MainWindow(QMainWindow):
 
         status = result.status
         fname = os.path.basename(path)
+        request_language_pair = self.translator_page.pending_language_pairs.pop(path, None)
+        usage = result.usage or {}
+        self.translator_page.page_token_usage[path] = usage.copy()
+        if path == self.current_img_path:
+            self.translator_page.show_token_usage(usage)
 
         if status == ProviderStatus.SUCCESS:
+            self.translator_page.page_language_pairs[path] = (
+                request_language_pair or self.translator_page.current_language_pair()
+            )
             self.page_states[path] = PageState.READY
             self.file_list.update_item_state(path, "ready", f"Translated ({len(result.bubbles)} dialogues)")
             self.translator_page.page_bubbles_data[path] = result.bubbles
             self.translator_page.path_dialogues_map[path] = [b.get("direct") for b in result.bubbles if b.get("direct")]
 
         elif status == ProviderStatus.EMPTY:
+            self.translator_page.page_language_pairs.pop(path, None)
             self.page_states[path] = PageState.EMPTY
             self.file_list.update_item_state(path, "empty", result.message or "Silent panel (No text detected)")
             self.translator_page.page_bubbles_data[path] = []
@@ -511,8 +577,13 @@ class MainWindow(QMainWindow):
             self.file_list.update_item_state(path, "error", result.message or "Translation failed")
             self.failed_batch_tasks.append((fname, result.message, path))
 
+        if path == self._active_batch_path:
+            self._active_batch_path = None
         if path == self.current_img_path:
             self.translator_page.populate_bubble_editor(result.bubbles)
+            self._update_current_page_audit_lock()
+
+        self.refresh_usage_summary()
 
         if self.stop_requested:
             self.finalize_batch_translate()
@@ -521,6 +592,7 @@ class MainWindow(QMainWindow):
 
     def on_batch_page_error(self, path: str, error_msg: str):
         """Handles unhandled worker thread errors during batch translation."""
+        self.translator_page.pending_language_pairs.pop(path, None)
         if self.worker_thread:
             self.worker_thread.quit()
             self.worker_thread.wait()
@@ -533,6 +605,7 @@ class MainWindow(QMainWindow):
             self.file_list.update_item_state(path, "unmodified", "Daily quota exhausted")
             self.stop_requested = True
             self.stop_reason = "quota"
+            self._active_batch_path = None
             logger.warning(f"[BATCH QUOTA] Daily quota exhausted on {os.path.basename(path)}. Halting batch.")
             self.finalize_batch_translate()
             return
@@ -544,6 +617,9 @@ class MainWindow(QMainWindow):
         self.page_states[path] = PageState.ERROR
         self.file_list.update_item_state(path, "error", error_msg[:60])
         self.failed_batch_tasks.append((fname, error_msg[:60], path))
+        if path == self._active_batch_path:
+            self._active_batch_path = None
+        self._update_current_page_audit_lock()
 
         logger.error(f"[BATCH ERROR] on {path}: {error_msg}")
 
@@ -556,6 +632,10 @@ class MainWindow(QMainWindow):
         """Concludes the batch run, unlocks controls, and reports completed and failed tasks."""
         self.is_batching = False
         self.is_paused = False
+        self._active_batch_path = None
+        self._finish_timed_job(
+            "Batch complete" if not self.stop_requested and not self.failed_batch_tasks else "Batch finished"
+        )
         self.progress_bar.setVisible(False)
         self.btn_batch.setEnabled(True)
         self.btn_batch.setText("▶ RUN BATCH TRANSLATE")
@@ -567,6 +647,21 @@ class MainWindow(QMainWindow):
         pending = list(self.batch_queue)
         self.batch_queue.clear()
         successful_count = self.completed_batch_tasks - len(self.failed_batch_tasks)
+        duration_suffix = (
+            f" · {self._format_elapsed(self._last_job_duration)}"
+            if self._last_job_duration is not None else ""
+        )
+        if not self.stop_requested and not self.failed_batch_tasks and not pending:
+            self.translator_page.show_status_message(
+                f"✔ Batch complete · {successful_count}/{self.total_batch_tasks} pages translated{duration_suffix}",
+                "#00e676",
+            )
+        else:
+            self.translator_page.show_status_message(
+                f"⚠ Batch finished · {successful_count} successful · "
+                f"{len(self.failed_batch_tasks)} failed · {len(pending)} pending{duration_suffix}",
+                "#ffd600",
+            )
 
         if not self.failed_batch_tasks and not pending and not self.stop_requested:
             QMessageBox.information(
@@ -662,6 +757,9 @@ class MainWindow(QMainWindow):
             self.file_list.clear()
             self.translator_page.page_bubbles_data.clear()
             self.translator_page.path_dialogues_map.clear()
+            self.translator_page.page_token_usage.clear()
+            self.translator_page.page_language_pairs.clear()
+            self.translator_page.pending_language_pairs.clear()
             self.current_img_path = None
 
             natural_key = lambda name: [int(s) if s.isdigit() else s.lower() for s in re.split(r"(\d+)", name)]
@@ -753,8 +851,147 @@ class MainWindow(QMainWindow):
                 self.worker_thread.wait(1000)
         super().closeEvent(event)
 
-    def update_telemetry(self):
-        """Updates hardware telemetry meters on the navigation bar."""
-        ram, _ = self.monitor.get_stats()
-        self.hw_mon.lbl.setText(f"RAM: {ram}MB")
-        self.hw_mon.bar.setValue(min(ram // 40, 100))
+    def refresh_usage_summary(self):
+        """Refreshes provider, model, thinking state, and Gemini-only RPD controls."""
+        if not hasattr(self, "translator_page"):
+            return
+        config = self.translator_page.get_active_api_config()
+        provider = config["provider_id"]
+        model = config["model"]
+        thinking = config.get("thinking_level", "").title() if provider == "gemini" else "N/A"
+        self._header_info = (
+            f"{config['provider_name']} · {model or 'No model selected'} · Thinking: {thinking}"
+        )
+        if not config["has_credentials"] and self._job_started_at is None:
+            self._request_status = "Credentials needed"
+        elif config["has_credentials"] and self._request_status == "Credentials needed":
+            self._request_status = "Ready"
+        self._update_elapsed_display()
+        self.lbl_usage_summary.setToolTip(
+            f"Request pacing: {config['request_pacing'].upper()}. "
+            "Provider, model, and thinking level are read from the active API settings."
+        )
+        self.rpd_panel.setVisible(provider == "gemini")
+        if provider == "gemini" and model:
+            state = self.usage_manager.get_gemini_rpd(config["usage_profile"], model)
+            view_key = (config["usage_profile"], model, state["date"])
+            period_or_model_changed = view_key != self._rpd_view_key
+            self._rpd_view_key = view_key
+            if period_or_model_changed or not self.txt_rpd_limit.hasFocus():
+                self.txt_rpd_limit.setText(str(state["limit"]))
+            if period_or_model_changed or not self.txt_rpd_used.hasFocus():
+                self.txt_rpd_used.setText(str(state["used"]))
+            self._refresh_gemini_rpd_status()
+
+    @staticmethod
+    def _format_elapsed(seconds: float) -> str:
+        total = max(0, int(seconds))
+        hours, remainder = divmod(total, 3600)
+        minutes, secs = divmod(remainder, 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}" if hours else f"{minutes:02d}:{secs:02d}"
+
+    def _update_elapsed_display(self):
+        if not hasattr(self, "lbl_usage_summary"):
+            return
+        if self._job_started_at is not None:
+            elapsed = time.monotonic() - self._job_started_at
+            activity = self._request_status
+            elapsed_text = self._format_elapsed(elapsed)
+            if hasattr(self, "translator_page"):
+                self.translator_page.update_inference_elapsed(elapsed_text)
+        elif self._last_job_duration is not None:
+            activity = f"{self._request_status} · {self._format_elapsed(self._last_job_duration)}"
+            if hasattr(self, "translator_page"):
+                self.translator_page.update_inference_elapsed(self._format_elapsed(self._last_job_duration), finished=True)
+        else:
+            activity = self._request_status
+        self.lbl_usage_summary.setText(f"{self._header_info} · {activity}")
+
+    def _start_timed_job(self, status: str = "Waiting to send"):
+        self.elapsed_timer.stop()
+        self._job_started_at = None
+        self._last_job_duration = None
+        self._request_status = status
+        self._update_elapsed_display()
+
+    def _on_request_started(self):
+        if self._job_started_at is None:
+            self._job_started_at = time.monotonic()
+            self._last_job_duration = None
+            self._request_status = "Working"
+            self.elapsed_timer.start()
+            self._update_elapsed_display()
+
+    def _finish_timed_job(self, status: str):
+        if self._job_started_at is not None:
+            self._last_job_duration = time.monotonic() - self._job_started_at
+        self._job_started_at = None
+        self.elapsed_timer.stop()
+        self._request_status = status
+        self._update_elapsed_display()
+
+    def _set_request_status(self, status: str):
+        self._request_status = status
+        self._update_elapsed_display()
+
+    def _request_pacing_changed(self, *_):
+        mode = str(self.request_pacing_combo.currentData() or "low").lower()
+        self.translator_page.cred_manager.save({"request_pacing": mode})
+        self.refresh_usage_summary()
+
+    def _rpd_field_value(self, field: QLineEdit) -> int:
+        text = field.text().strip()
+        if not text:
+            return 0
+        return int(text)
+
+    def _refresh_gemini_rpd_status(self, *_):
+        if not hasattr(self, "lbl_rpd_status"):
+            return
+        try:
+            limit = self._rpd_field_value(self.txt_rpd_limit)
+            used = self._rpd_field_value(self.txt_rpd_used)
+        except ValueError:
+            self.lbl_rpd_status.setText("Enter whole numbers only.")
+            self.lbl_rpd_status.setStyleSheet("color: #ff5252; font-size: 9px; font-weight: bold;")
+            return
+        if limit > 0 and used > limit:
+            text = f"RPD limit exceeded: {used} / {limit}"
+            color = "#ff5252"
+        elif limit == 0:
+            text = "RPD tracking off (limit is 0)"
+            color = "#a0a0ad"
+        else:
+            text = f"RPD within limit: {used} / {limit}"
+            color = "#00e676"
+        self.lbl_rpd_status.setText(text)
+        self.lbl_rpd_status.setStyleSheet(f"color: {color}; font-size: 9px; font-weight: bold;")
+
+    def _save_gemini_rpd_fields(self):
+        config = self.translator_page.get_active_api_config()
+        if config["provider_id"] != "gemini" or not config["model"]:
+            return
+        try:
+            limit = self._rpd_field_value(self.txt_rpd_limit)
+            used = self._rpd_field_value(self.txt_rpd_used)
+            self.usage_manager.set_gemini_rpd(
+                config["usage_profile"], config["model"], limit, used
+            )
+        except (ValueError, OSError) as exc:
+            self.lbl_rpd_status.setText(f"Could not save RPD values: {exc}")
+            self.lbl_rpd_status.setStyleSheet("color: #ff5252; font-size: 9px; font-weight: bold;")
+            return
+        self._refresh_gemini_rpd_status()
+
+    def open_usage_pricing(self):
+        """Opens editable price tables and request history."""
+        config = self.translator_page.get_active_api_config()
+        dialog = UsagePricingDialog(
+            self.usage_manager,
+            config["provider_id"],
+            config["model"],
+            config["usage_profile"],
+            self,
+        )
+        if dialog.exec() == QDialog.Accepted:
+            self.refresh_usage_summary()

@@ -1,4 +1,6 @@
 import time
+import os
+import sys
 import requests
 from src.backend.providers.base_provider import (
     BaseAIProvider, 
@@ -50,6 +52,25 @@ class GeminiProvider(BaseAIProvider):
     def __init__(self):
         super().__init__("gemini")
 
+    @staticmethod
+    def supported_thinking_levels(model: str) -> list[str]:
+        """Returns documented Gemini 3 thinking levels for a model ID."""
+        model_id = model.lower().replace("models/", "").strip()
+        if model_id.startswith("gemma-4-"):
+            return ["minimal", "high"]
+        if "gemini-3.1-pro" in model_id:
+            return ["low", "medium", "high"]
+        if "gemini-3-pro-preview" in model_id:
+            return ["low", "high"]
+        if any(version in model_id for version in ("gemini-3.8-flash", "gemini-3.7-flash")):
+            return ["low", "medium", "high"]
+        if any(version in model_id for version in (
+            "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-3.5-flash",
+            "gemini-3-flash-preview",
+        )):
+            return ["minimal", "low", "medium", "high"]
+        return []
+
     def test_and_fetch_models(self, key_or_url: str, auth_token: str = "") -> tuple[bool, list[str], str]:
         """
         Validates API key connectivity and fetches available vision-capable Gemini models.
@@ -75,7 +96,9 @@ class GeminiProvider(BaseAIProvider):
             for m in raw_models:
                 name = m.get("name", "").replace("models/", "")
                 methods = m.get("supportedGenerationMethods", [])
-                if "generateContent" in methods and ("flash" in name or "pro" in name):
+                if "generateContent" in methods and (
+                    "flash" in name or "pro" in name or name.startswith("gemma-4-")
+                ):
                     supported.append(name)
 
             supported.sort(key=lambda x: (not ("flash" in x), x))
@@ -90,7 +113,9 @@ class GeminiProvider(BaseAIProvider):
         model: str,
         api_key: str = "",
         endpoint_url: str = "",
-        token: str = ""
+        token: str = "",
+        thinking_level: str = "minimal",
+        system_prompt: str = "",
     ) -> TranslationResult:
         """
         Executes a multimodal vision inference request against Google Gemini generateContent.
@@ -99,7 +124,8 @@ class GeminiProvider(BaseAIProvider):
             TranslationResult: Standardized container holding status, parsed dialogues, and telemetry.
         """
         b64_img = self.encode_image(image_path)
-        usage_info = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        request_count = 0
+        usage_info = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0, "request_count": 0}
         max_retries = 2
 
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -107,13 +133,12 @@ class GeminiProvider(BaseAIProvider):
             "x-goog-api-key": api_key.strip(),
             "Content-Type": "application/json"
         }
+        user_parts = []
+        if prompt.strip():
+            user_parts.append({"text": prompt})
+        user_parts.append({"inline_data": {"mime_type": "image/jpeg", "data": b64_img}})
         payload = {
-            "contents": [{
-                "parts": [
-                    {"text": prompt},
-                    {"inline_data": {"mime_type": "image/jpeg", "data": b64_img}}
-                ]
-            }],
+            "contents": [{"parts": user_parts}],
             "safetySettings": SAFETY_SETTINGS_BLOCK_NONE,
             "generationConfig": {
                 "response_mime_type": "application/json",
@@ -121,9 +146,28 @@ class GeminiProvider(BaseAIProvider):
                 "maxOutputTokens": 8192
             }
         }
+        if system_prompt.strip():
+            payload["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+        # Gemini 3 supports configurable thinking. Thought summaries are requested
+        # only in development builds and remain separate from the translation JSON.
+        supported_levels = self.supported_thinking_levels(model)
+        if supported_levels:
+            level = thinking_level.lower().strip()
+            payload["generationConfig"]["thinkingConfig"] = {
+                "thinkingLevel": level if level in supported_levels else supported_levels[0],
+            }
+            # Gemini supports requested thought summaries. Gemma 4 documents the
+            # thinking toggle, but not this summary flag; its raw response is logged.
+            if not model.lower().startswith("gemma-4-"):
+                payload["generationConfig"]["thinkingConfig"]["includeThoughts"] = (
+                    not getattr(sys, "frozen", False)
+                    and os.environ.get("MTS_DEBUG", "1") == "1"
+                )
 
         for attempt in range(max_retries + 1):
             try:
+                request_count += 1
+                usage_info["request_count"] = request_count
                 res = requests.post(url, headers=headers, json=payload, timeout=90)
 
                 # Handle HTTP 429 (Rate limits vs Daily quota exhaustion)
@@ -131,7 +175,10 @@ class GeminiProvider(BaseAIProvider):
                     body_err = res.text.lower()
                     # Distinguish permanent daily request limits (RPD) from transient burst limits (RPM)
                     if any(term in body_err for term in ("per day", "perday", "daily")):
-                        raise DailyQuotaExceeded("Daily request limit exhausted for Gemini (RPD).")
+                        raise DailyQuotaExceeded(
+                            "Daily request limit exhausted for Gemini (RPD).",
+                            request_count=request_count,
+                        )
                     
                     if attempt < max_retries:
                         time.sleep(8 * (attempt + 1))
@@ -171,7 +218,16 @@ class GeminiProvider(BaseAIProvider):
                 meta = res_json.get("usageMetadata", {})
                 p_tok = meta.get("promptTokenCount", 0)
                 c_tok = meta.get("candidatesTokenCount", 0)
-                usage_info = {"prompt_tokens": p_tok, "output_tokens": c_tok, "total_tokens": p_tok + c_tok}
+                thought_tokens = meta.get("thoughtsTokenCount", 0)
+                usage_info = {
+                    "prompt_tokens": p_tok,
+                    "output_tokens": c_tok,
+                    "thought_tokens": thought_tokens,
+                    "request_count": request_count,
+                    "total_tokens": meta.get("totalTokenCount", p_tok + c_tok + thought_tokens),
+                }
+                if "cachedContentTokenCount" in meta:
+                    usage_info["cache_tokens"] = meta.get("cachedContentTokenCount", 0)
 
                 # 1. Evaluation of input prompt feedback (BlockedReason enum)
                 prompt_feedback = res_json.get("promptFeedback", {})
@@ -182,7 +238,8 @@ class GeminiProvider(BaseAIProvider):
                         status=ProviderStatus.SAFETY_BLOCKED,
                         usage=usage_info,
                         message=f"Gemini input rejected: {reason_desc} Switch LLM provider.",
-                        raw_error=f"promptFeedback.blockReason={block_reason}"
+                        raw_error=f"promptFeedback.blockReason={block_reason}",
+                        debug_response=res_json,
                     )
 
                 # 2. Candidates existence validation
@@ -192,7 +249,8 @@ class GeminiProvider(BaseAIProvider):
                         status=ProviderStatus.SAFETY_BLOCKED,
                         usage=usage_info,
                         message="Gemini returned 0 candidates (image filtered pre-generation). Switch LLM provider.",
-                        raw_error="candidates=[]"
+                        raw_error="candidates=[]",
+                        debug_response=res_json,
                     )
 
                 cand = candidates[0]
@@ -205,7 +263,8 @@ class GeminiProvider(BaseAIProvider):
                         status=ProviderStatus.SAFETY_BLOCKED,
                         usage=usage_info,
                         message=f"Generation halted: {reason_desc} Switch LLM provider.",
-                        raw_error=f"finishReason={finish_reason}"
+                        raw_error=f"finishReason={finish_reason}",
+                        debug_response=res_json,
                     )
 
                 if finish_reason and finish_reason not in ("STOP", ""):
@@ -213,7 +272,8 @@ class GeminiProvider(BaseAIProvider):
                         status=ProviderStatus.ERROR,
                         usage=usage_info,
                         message=f"Unexpected finishReason: {finish_reason}",
-                        raw_error=f"finishReason={finish_reason}"
+                        raw_error=f"finishReason={finish_reason}",
+                        debug_response=res_json,
                     )
 
                 # Extract content parts, safely avoiding thought blocks and null contents
@@ -229,14 +289,16 @@ class GeminiProvider(BaseAIProvider):
                         status=ProviderStatus.EMPTY,
                         bubbles=[],
                         usage=usage_info,
-                        message="No text detected on this page (silent panel)."
+                        message="No text detected on this page (silent panel).",
+                        debug_response=res_json,
                     )
 
                 return TranslationResult(
                     status=ProviderStatus.SUCCESS,
                     bubbles=bubbles,
                     usage=usage_info,
-                    message=f"Successfully extracted {len(bubbles)} dialogue(s)."
+                    message=f"Successfully extracted {len(bubbles)} dialogue(s).",
+                    debug_response=res_json,
                 )
 
             except DailyQuotaExceeded:

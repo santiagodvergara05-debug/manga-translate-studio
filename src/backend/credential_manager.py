@@ -1,6 +1,7 @@
 import os
 import json
 import copy
+from uuid import uuid4
 from src.utils.paths import Paths
 from src.utils.logger import logger
 
@@ -33,20 +34,115 @@ class CredentialManager:
             "mode": "Manhwa",
             "src_lang": "English",
             "tgt_lang": "Spanish (Neutral)",
+            "request_pacing": "low",
             "gemini": {
                 "key": "",
+                "usage_profile": "",
                 "model": "gemini-3.1-flash-lite",
+                "thinking_level": "minimal",
                 "models_list": ["gemini-3.1-flash-lite", "gemini-1.5-flash", "gemini-1.5-pro"]
             },
             "ollama": {
                 "lan_mode": True,
+                "usage_profile": "",
                 "url": "http://localhost:11434",
                 "token": "",
                 "model": "",
                 "models_list": []
-            }
+            },
+            "connection_profiles": {},
+            "active_connection_profile_id": "",
         }
         self.data = self.load()
+        if self._ensure_connection_profiles():
+            self.save()
+
+    def _ensure_connection_profiles(self) -> bool:
+        """Migrate the current per-provider settings into selectable connection profiles."""
+        profiles = self.data.get("connection_profiles")
+        changed = False
+        if not isinstance(profiles, dict) or not profiles:
+            profiles = {}
+            current_provider = str(self.data.get("provider", "gemini")).lower()
+            for provider_id, credentials in self.data.items():
+                if provider_id in {
+                    "provider", "mode", "src_lang", "tgt_lang",
+                    "connection_profiles", "active_connection_profile_id",
+                } or not isinstance(credentials, dict):
+                    continue
+                if not any(
+                    credentials.get(field)
+                    for field in ("key", "token", "url", "model", "models_list")
+                ):
+                    continue
+                saved_group = str(credentials.get("usage_profile", "")).strip()
+                name = saved_group or f"{provider_id.title()} (current)"
+                profile_id = f"legacy-{provider_id}"
+                profiles[profile_id] = {
+                    "name": name,
+                    "provider": provider_id.lower(),
+                    "credentials": copy.deepcopy(credentials),
+                }
+            if not profiles:
+                provider_id = current_provider
+                credentials = copy.deepcopy(self.data.get(provider_id, {}))
+                profile_id = f"legacy-{provider_id}"
+                profiles[profile_id] = {
+                    "name": f"{provider_id.title()} (current)",
+                    "provider": provider_id,
+                    "credentials": credentials,
+                }
+            self.data["connection_profiles"] = profiles
+            changed = True
+
+        active_id = self.data.get("active_connection_profile_id")
+        current_provider = str(self.data.get("provider", "gemini")).lower()
+        active = profiles.get(active_id) if isinstance(profiles, dict) else None
+        if not isinstance(active, dict) or not isinstance(active.get("credentials"), dict):
+            active_id = next(
+                (key for key, profile in profiles.items()
+                 if isinstance(profile, dict)
+                 and profile.get("provider") == current_provider
+                 and isinstance(profile.get("credentials"), dict)),
+                next(iter(profiles), None),
+            )
+            changed = True
+        if active_id is not None:
+            profile = profiles[active_id]
+            provider_id = str(profile.get("provider", current_provider)).lower()
+            credentials = profile.get("credentials", {})
+            self.data["active_connection_profile_id"] = active_id
+            self.data["provider"] = provider_id
+            if isinstance(credentials, dict):
+                if self.data.get(provider_id) != credentials:
+                    changed = True
+                self.data[provider_id] = copy.deepcopy(credentials)
+        return changed
+
+    def get_connection_profiles(self) -> dict:
+        return copy.deepcopy(self.data.get("connection_profiles", {}))
+
+    def get_active_connection_profile_id(self) -> str:
+        return str(self.data.get("active_connection_profile_id", ""))
+
+    def save_connection_profiles(self, profiles: dict, active_profile_id: str):
+        """Persist profiles and mirror the active connection into the legacy runtime fields."""
+        active = profiles.get(active_profile_id) if isinstance(profiles, dict) else None
+        if not isinstance(active, dict):
+            raise ValueError("Select a connection profile before saving.")
+        provider_id = str(active.get("provider", "")).strip().lower()
+        credentials = active.get("credentials")
+        if not provider_id or not isinstance(credentials, dict):
+            raise ValueError("The selected connection profile is incomplete.")
+        self.data["connection_profiles"] = copy.deepcopy(profiles)
+        self.data["active_connection_profile_id"] = active_profile_id
+        self.data["provider"] = provider_id
+        self.data[provider_id] = copy.deepcopy(credentials)
+        self.save()
+
+    @staticmethod
+    def new_connection_profile_id() -> str:
+        return uuid4().hex
 
     def load(self) -> dict:
         """

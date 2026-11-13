@@ -38,7 +38,6 @@ def build():
         "--hidden-import=PIL",
         "--hidden-import=cv2",
         "--hidden-import=numpy",
-        "--hidden-import=psutil",
         "--hidden-import=src.backend.providers.gemini_provider",
         "--hidden-import=src.backend.providers.ollama_provider",
         "--hidden-import=src.backend.credential_manager",

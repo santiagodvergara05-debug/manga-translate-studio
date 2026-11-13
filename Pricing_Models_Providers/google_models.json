@@ -1,0 +1,59 @@
+{
+  "version": 2,
+  "notes": [
+    "Transcribed from the Google AI Studio screenshots supplied by the project maintainer on 2026-11-12.",
+    "Gemini 3.6 Flash and Gemini 3.8 Flash rates are shown as valid through 2026-12-31; review them after that date.",
+    "Gemini 3.1 Flash Lite lists audio input at USD 0.50/M separately from text, image, and video at USD 0.25/M. The current MTS price schema has one input rate per model, so this row uses the text/image/video rate.",
+    "Gemma 4 models are entered at zero cost based on the maintainer's note that these models are free."
+  ],
+  "prices": [
+    {
+      "provider": "gemini",
+      "model": "gemini-3.5-flash-lite",
+      "plan": "paid",
+      "input_usd_per_million": 0.3,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 2.5
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.1-flash-lite",
+      "plan": "paid",
+      "input_usd_per_million": 0.25,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 1.5
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.6-flash",
+      "plan": "paid",
+      "input_usd_per_million": 0.75,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 3.75
+    },
+    {
+      "provider": "gemini",
+      "model": "gemini-3.8-flash",
+      "plan": "paid",
+      "input_usd_per_million": 0.75,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 3.75
+    },
+    {
+      "provider": "gemini",
+      "model": "gemma-4-26b-a4b-it",
+      "plan": "free",
+      "input_usd_per_million": 0.0,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 0.0
+    },
+    {
+      "provider": "gemini",
+      "model": "gemma-4-31b-it",
+      "plan": "free",
+      "input_usd_per_million": 0.0,
+      "cached_input_usd_per_million": null,
+      "output_usd_per_million": 0.0
+    }
+  ]
+}

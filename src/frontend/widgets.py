@@ -2,13 +2,12 @@
 Reusable interface widgets, file navigation list, and dynamic SVG icon provider.
 
 Loads application icons directly from the assets/ directory with fallback handling,
-and provides telemetry and asset list management.
+and provides project asset list management.
 """
 
 import os
 from PySide6.QtWidgets import (
-    QListWidget, QListWidgetItem, QWidget, QHBoxLayout, 
-    QLabel, QProgressBar
+    QListWidget, QListWidgetItem,
 )
 from PySide6.QtGui import QIcon, QPixmap, QPainter
 from PySide6.QtSvg import QSvgRenderer
@@ -146,37 +145,3 @@ class FileListWidget(QListWidget):
                 status_desc = tooltip_msg if tooltip_msg else clean_state.capitalize()
                 it.setToolTip(f"{fname}\nStatus: {status_desc}")
                 break
-
-
-# ==============================================================================
-# HARDWARE TELEMETRY MONITOR (RAM USAGE)
-# ==============================================================================
-class HardwareMonitor(QWidget):
-    """Compact navbar widget providing real-time process RAM usage telemetry."""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(6)
-
-        self.lbl = QLabel("RAM: --MB")
-        self.lbl.setStyleSheet("color: #888899; font-size: 10px; font-weight: bold;")
-
-        self.bar = QProgressBar()
-        self.bar.setFixedSize(65, 8)
-        self.bar.setTextVisible(False)
-        self.bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #2a2a35;
-                border-radius: 4px;
-                background-color: #14141c;
-            }
-            QProgressBar::chunk {
-                background-color: #00d2ff;
-                border-radius: 3px;
-            }
-        """)
-
-        lay.addWidget(self.lbl)
-        lay.addWidget(self.bar)

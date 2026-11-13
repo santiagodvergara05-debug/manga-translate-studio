@@ -1,0 +1,29 @@
+{
+  "version": 2,
+  "prices": [
+    {"provider": "ollama", "model": "beam", "plan": "any", "input_usd_per_million": 0.125, "cached_input_usd_per_million": 0.015, "output_usd_per_million": 0.4},
+    {"provider": "ollama", "model": "clef", "plan": "any", "input_usd_per_million": 0.24, "cached_input_usd_per_million": null, "output_usd_per_million": null},
+    {"provider": "ollama", "model": "deepseek-v4.1-flash", "plan": "any", "input_usd_per_million": 0.3, "cached_input_usd_per_million": 0.006, "output_usd_per_million": 1.2},
+    {"provider": "ollama", "model": "deepseek-v4.1-flash", "plan": "off-peak", "input_usd_per_million": 0.15, "cached_input_usd_per_million": 0.003, "output_usd_per_million": 0.6},
+    {"provider": "ollama", "model": "deepseek-v4-pro", "plan": "any", "input_usd_per_million": 1.32, "cached_input_usd_per_million": 0.044, "output_usd_per_million": 3.96},
+    {"provider": "ollama", "model": "deepseek-v4-pro", "plan": "off-peak", "input_usd_per_million": 0.66, "cached_input_usd_per_million": 0.022, "output_usd_per_million": 1.98},
+    {"provider": "ollama", "model": "gemma4", "plan": "any", "input_usd_per_million": 0.14, "cached_input_usd_per_million": 0.05, "output_usd_per_million": 0.4},
+    {"provider": "ollama", "model": "glm-5.3", "plan": "any", "input_usd_per_million": 1.4, "cached_input_usd_per_million": 0.26, "output_usd_per_million": 4.4},
+    {"provider": "ollama", "model": "glm-5.3-flash", "plan": "any", "input_usd_per_million": 0.15, "cached_input_usd_per_million": 0.03, "output_usd_per_million": 0.5},
+    {"provider": "ollama", "model": "glm-5.2", "plan": "any", "input_usd_per_million": 1.4, "cached_input_usd_per_million": 0.26, "output_usd_per_million": 4.4},
+    {"provider": "ollama", "model": "gpt-oss:120b", "plan": "any", "input_usd_per_million": 0.15, "cached_input_usd_per_million": 0.014, "output_usd_per_million": 0.6},
+    {"provider": "ollama", "model": "gpt-oss:20b", "plan": "any", "input_usd_per_million": 0.07, "cached_input_usd_per_million": 0.035, "output_usd_per_million": 0.3},
+    {"provider": "ollama", "model": "kimi-k3.1-pro", "plan": "any", "input_usd_per_million": 2.0, "cached_input_usd_per_million": 0.2, "output_usd_per_million": 10.0},
+    {"provider": "ollama", "model": "kimi-k3", "plan": "any", "input_usd_per_million": 3.0, "cached_input_usd_per_million": 0.3, "output_usd_per_million": 15.0},
+    {"provider": "ollama", "model": "kimi-k2.7-code", "plan": "any", "input_usd_per_million": 0.95, "cached_input_usd_per_million": 0.19, "output_usd_per_million": 4.0},
+    {"provider": "ollama", "model": "kimi-k2.6", "plan": "any", "input_usd_per_million": 0.95, "cached_input_usd_per_million": 0.16, "output_usd_per_million": 4.0},
+    {"provider": "ollama", "model": "mimo-v2.6-flash", "plan": "any", "input_usd_per_million": 0.14, "cached_input_usd_per_million": 0.0028, "output_usd_per_million": 0.28},
+    {"provider": "ollama", "model": "mimo-v2.6-pro", "plan": "any", "input_usd_per_million": 0.435, "cached_input_usd_per_million": 0.0036, "output_usd_per_million": 0.87},
+    {"provider": "ollama", "model": "minimax-m3.1-flash", "plan": "any", "input_usd_per_million": 0.15, "cached_input_usd_per_million": 0.015, "output_usd_per_million": 0.6},
+    {"provider": "ollama", "model": "minimax-m3", "plan": "any", "input_usd_per_million": 0.6, "cached_input_usd_per_million": 0.12, "output_usd_per_million": 2.4},
+    {"provider": "ollama", "model": "mistral-large-4", "plan": "any", "input_usd_per_million": 0.7, "cached_input_usd_per_million": 0.07, "output_usd_per_million": 2.1},
+    {"provider": "ollama", "model": "muse-spark-open", "plan": "any", "input_usd_per_million": 1.25, "cached_input_usd_per_million": 0.15, "output_usd_per_million": 4.25},
+    {"provider": "ollama", "model": "nemotron-3-super", "plan": "any", "input_usd_per_million": 0.015, "cached_input_usd_per_million": 0.015, "output_usd_per_million": 0.6},
+    {"provider": "ollama", "model": "nemotron-3-ultra", "plan": "any", "input_usd_per_million": 0.1, "cached_input_usd_per_million": 0.1, "output_usd_per_million": 3.0}
+  ]
+}

@@ -16,9 +16,9 @@ Instead of relying on standalone, error-prone OCR engines, MTS performs direct m
 
 ---
 
-## 🖥️ Studio Workflow & Interface (v1.5.0 UI)
+## 🖥️ Studio Workflow & Interface
 
-![MANGA TRANSLATE STUDIO v1.5.0 UI](.github/Ui.png)
+![MANGA TRANSLATE STUDIO UI](.github/Ui.png)
 
 
 ---
@@ -31,7 +31,14 @@ Instead of relying on standalone, error-prone OCR engines, MTS performs direct m
 * **Two-Tier Script Organization**: Cleanly separates projects into `translations/<Series>/<Chapter>.txt`, allowing multi-chapter workspaces to remain organized without directory clutter.
 * **Adaptive Batch Orchestration**: Sequential chapter-level translation featuring adaptive cadence pacing to prevent HTTP 429 rate limits, with immediate halts on Daily Quota (`RPD`) exhaustion to protect API budgets.
 * **Custom Lore & Style Rules**: Dedicated user rules workspace (`cache/user_rules.txt`) to customize character voices, glossary terms, pronouns, and scanlation tone without bloating the technical core engine prompt.
+* **Saved Connection Profiles**: Switch between saved provider credentials, endpoints, models, and optional usage groups.
+* **Configurable Prompt Options**: Preview the generated system prompt and toggle extraction features, including SFX meanings and contextual R19 vocalization guidance.
+* **Usage & Pricing**: Review provider-reported token and cache usage, estimate costs from editable USD-per-million-token rates, and import or export community JSON price tables.
+* **Gemini Request Meter**: Optional local requests-per-day (RPD) limit and usage count, grouped by model and usage profile.
+* **Reviewable Batch Work**: Inspect completed pages while a batch continues; pending and active pages remain locked. Wheel scrolling navigates long pages, and `Ctrl` + wheel zooms the canvas.
 * **Dynamic Provider Extensibility**: Fully decoupled backend architecture allowing community contributors to add new AI providers and language pairs via clean abstract classes.
+
+See [CHANGELOG_1.6.0.md](CHANGELOG_1.6.0.md) for the detailed 1.6.0 change list.
 
 ---
 
@@ -39,42 +46,59 @@ Instead of relying on standalone, error-prone OCR engines, MTS performs direct m
 
 ```text
 Manga Translate Studio/
-├── assets/                          # Application vector icons (SVG Tiny) and branding
-│   └── icon_provider/               # AI provider logos (gemini.svg, ollama.svg, etc.)
-├── cache/                           # User rules, core rules, and persistent API configs (git-ignored)
-├── logs/                            # Diagnostic runtime logs and session traces (git-ignored)
-├── translations/                    # Series folders and exported .txt script templates (git-ignored)
-├── processed/                       # Output staging directory (git-ignored)
+├── .github/
+│   └── Ui.png                         # Repository UI screenshot
+├── .gitignore                          # Excludes local credentials, history, and generated files
+├── assets/                            # Application icons and branding
+│   └── icon_provider/                 # Provider logos (Gemini, Ollama, etc.)
+├── Pricing_Models_Providers/          # Community JSON price references for import
+│   ├── README.md                      # Price schema and contribution guidance
+│   ├── google_models.json             # Google Gemini and Gemma reference rates
+│   └── ollama_models.json             # Ollama Cloud reference rates
+├── cache/                             # Runtime user data (git-ignored; created by the app)
+│   ├── api_config.json                # Provider settings and saved connection profiles
+│   ├── core_rules.txt                 # Technical prompt rules
+│   ├── pricing_tables.json            # Imported/editable prices and Gemini RPD settings
+│   ├── prompt_options.json            # Extraction and prompt feature toggles
+│   ├── usage_history.json             # Local request and token history
+│   └── user_rules.txt                 # User glossary, lore, and style rules
+├── logs/                              # Runtime diagnostics (git-ignored)
+├── translations/                      # User translation scripts (git-ignored)
+├── processed/                         # Output staging directory (git-ignored)
 ├── src/
 │   ├── backend/
 │   │   ├── providers/
-│   │   │   ├── base_provider.py     # BaseAIProvider interface and TranslationResult schema
-│   │   │   ├── gemini_provider.py   # Google Gemini Vision REST API integration
-│   │   │   └── ollama_provider.py   # Ollama local daemon & OpenAI-compatible cloud client
-│   │   ├── ai_client.py             # Orchestration manager, token estimator & QThread workers
-│   │   ├── credential_manager.py    # Deep-merged JSON configuration persistence
-│   │   ├── languages.py             # ISO language definitions and localized SFX rules
-│   │   ├── prompt_manager.py        # Reading orders, core extraction rules & continuity context
-│   │   └── translator.py            # Dialogue cards UI panel, script parser & sync engine
+│   │   │   ├── base_provider.py       # Provider interface and normalized result schema
+│   │   │   ├── gemini_provider.py     # Gemini Vision API, thinking levels and usage metadata
+│   │   │   └── ollama_provider.py     # Ollama local and OpenAI-compatible cloud integration
+│   │   ├── ai_client.py               # Provider orchestration, request pacing and workers
+│   │   ├── credential_manager.py      # Persistent settings and connection profiles
+│   │   ├── languages.py               # Supported languages and localized SFX directives
+│   │   ├── prompt_manager.py          # Prompt construction, options and continuity context
+│   │   ├── translator.py              # Translation UI, prompt configuration and script engine
+│   │   └── usage_manager.py           # Pricing, usage history, cache data and Gemini RPD state
 │   ├── frontend/
-│   │   ├── canvas.py                # High-resolution GraphicsScene viewport with boundary clamping
-│   │   ├── help_system.py           # In-app user manual and keyboard shortcut reference
-│   │   ├── main_window.py           # Primary studio controller and batch state machine
-│   │   ├── project_reset.py         # Memory cleanup controller and glibc heap trimmer
-│   │   ├── styles.qss               # Deep Obsidian visual theme stylesheet
-│   │   └── widgets.py               # Dynamic SVG IconProvider, FileListWidget & RAM telemetry
+│   │   ├── api_settings.py            # Provider, connection profile and model settings dialog
+│   │   ├── canvas.py                  # Image viewport, scrolling and Ctrl+wheel zoom
+│   │   ├── help_system.py             # In-app guide for navigation, prompts and usage
+│   │   ├── main_window.py             # Main UI, batch workflow, pacing and RPD controls
+│   │   ├── project_reset.py           # Project/session reset and memory cleanup
+│   │   ├── styles.qss                 # Application visual theme
+│   │   ├── usage_pricing.py           # Usage history, price editor and JSON import/export
+│   │   └── widgets.py                 # SVG icon provider and project asset list
 │   └── utils/
-│       ├── config.py                # Global constants, versioning, and color palette
-│       ├── history.py               # Undo/redo session state stack
-│       ├── logger.py                # Thread-safe diagnostic logging with status flags
-│       ├── paths.py                 # Dynamic path resolver for source and frozen environments
-│       └── system_info.py           # Process RSS memory monitoring via psutil
-├── build_exe.py                     # PyInstaller automated packaging script
-├── CONTRIBUTING.md                  # Guidelines for Pull Requests and Code of Conduct
-├── LICENSE                          # Apache License 2.0 legal terms
-├── main.py                          # Application bootstrap entry point
-└── requirements.txt                 # Runtime dependencies
-
+│       ├── config.py                  # Global constants, version and color palette
+│       ├── history.py                 # Undo/redo session state
+│       ├── logger.py                  # Runtime logging
+│       └── paths.py                   # Source/frozen path resolver
+├── build_exe.py                       # PyInstaller packaging script
+├── CONTRIBUTING.md                    # Contribution and pull request guidelines
+├── CHANGELOG_1.6.0.md                 # Detailed changes in version 1.6.0
+├── generate_icons.py                  # Application icon generation utility
+├── LICENSE                            # Apache License 2.0
+├── main.py                            # Application entry point
+├── README.md                          # Project overview and setup guide
+└── requirements.txt                   # Runtime dependencies
 ```
 
 ---
@@ -171,7 +195,8 @@ Both tools run independently from the same root directory while seamlessly shari
 | Shortcut | Description |
 | --- | --- |
 | `Hold [Space]` | Toggle hand tool for smooth canvas panning |
-| `Mouse Wheel` | Smooth incremental zoom centered on cursor |
+| `Mouse Wheel` | Scroll vertically through long pages |
+| `Ctrl + Mouse Wheel` | Zoom centered on the cursor |
 | `Middle Click` | Reset canvas zoom scale to 1:1 original size |
 | `Space + Click Drag` | Pan across ultra-high-resolution pages |
 

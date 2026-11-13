@@ -27,6 +27,7 @@ class OllamaProvider(BaseAIProvider):
     primary_placeholder = "https://ollama.com/v1"
     secondary_placeholder = "Enter Ollama Cloud API Key..."
     default_endpoint = "http://localhost:11434"
+    default_cloud_endpoint = "https://ollama.com/v1"
     default_models = ["gemma4:31b-cloud"]
 
     def __init__(self):
@@ -113,7 +114,9 @@ class OllamaProvider(BaseAIProvider):
         model: str,
         api_key: str = "",
         endpoint_url: str = "",
-        token: str = ""
+        token: str = "",
+        thinking_level: str = "minimal",
+        system_prompt: str = "",
     ) -> TranslationResult:
         """
         Executes a multimodal translation inference request via Ollama.
@@ -127,7 +130,8 @@ class OllamaProvider(BaseAIProvider):
         """
         b64_img = self.encode_image(image_path)
         base_url = self.normalize_url(endpoint_url)
-        usage_info = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        request_count = 0
+        usage_info = {"prompt_tokens": 0, "output_tokens": 0, "total_tokens": 0, "request_count": 0}
         
         headers = {"Content-Type": "application/json"}
         if token.strip():
@@ -141,23 +145,27 @@ class OllamaProvider(BaseAIProvider):
                     url = f"{base_url}/chat/completions"
                     payload = {
                         "model": model,
-                        "messages": [{
+                        "messages": ([{"role": "system", "content": system_prompt}] if system_prompt.strip() else []) + [{
                             "role": "user",
-                            "content": [
-                                {"type": "text", "text": prompt},
+                            "content": ([{"type": "text", "text": prompt}] if prompt.strip() else []) + [
                                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64_img}"}}
                             ]
                         }],
                         "temperature": 0.2,
                         "response_format": {"type": "json_object"}
                     }
+                    request_count += 1
+                    usage_info["request_count"] = request_count
                     res = requests.post(url, headers=headers, json=payload, timeout=120)
                     
                     # Handle rate limits and distinguish from exhausted monthly/credit quota
                     if res.status_code == 429:
                         body_err = res.text.lower()
                         if any(term in body_err for term in ("insufficient_quota", "quota_exceeded", "credit", "billing", "monthly")) and "rate limit" not in body_err:
-                            raise DailyQuotaExceeded("Monthly or credit quota exhausted on Ollama Cloud.")
+                            raise DailyQuotaExceeded(
+                                "Monthly or credit quota exhausted on Ollama Cloud.",
+                                request_count=request_count,
+                            )
                         
                         if attempt < max_retries:
                             time.sleep(6 * (attempt + 1))
@@ -209,7 +217,15 @@ class OllamaProvider(BaseAIProvider):
                     u = res_json.get("usage", {}) or {}
                     p_tok = u.get("prompt_tokens", 0)
                     c_tok = u.get("completion_tokens", 0)
-                    usage_info = {"prompt_tokens": p_tok, "output_tokens": c_tok, "total_tokens": p_tok + c_tok}
+                    usage_info = {
+                        "prompt_tokens": p_tok,
+                        "output_tokens": c_tok,
+                        "total_tokens": p_tok + c_tok,
+                        "request_count": request_count,
+                    }
+                    prompt_details = u.get("prompt_tokens_details", {}) or {}
+                    if "cached_tokens" in prompt_details:
+                        usage_info["cache_tokens"] = prompt_details.get("cached_tokens", 0)
 
                 # Execution Branch B: Native Ollama daemon format (/api/generate)
                 else:
@@ -217,11 +233,14 @@ class OllamaProvider(BaseAIProvider):
                     payload = {
                         "model": model,
                         "prompt": prompt,
+                        "system": system_prompt,
                         "images": [b64_img],
                         "stream": False,
                         "format": "json",
                         "options": {"num_ctx": 8192, "temperature": 0.2}
                     }
+                    request_count += 1
+                    usage_info["request_count"] = request_count
                     res = requests.post(url, headers=headers, json=payload, timeout=120)
 
                     # Non-retryable client errors
@@ -261,7 +280,14 @@ class OllamaProvider(BaseAIProvider):
 
                     p_tok = res_json.get("prompt_eval_count", 0)
                     c_tok = res_json.get("eval_count", 0)
-                    usage_info = {"prompt_tokens": p_tok, "output_tokens": c_tok, "total_tokens": p_tok + c_tok}
+                    usage_info = {
+                        "prompt_tokens": p_tok,
+                        "output_tokens": c_tok,
+                        "total_tokens": p_tok + c_tok,
+                        "request_count": request_count,
+                    }
+                    if "prompt_eval_cached_count" in res_json:
+                        usage_info["cache_tokens"] = res_json.get("prompt_eval_cached_count", 0)
 
                 # Validate whether text entities were extracted
                 if not bubbles:

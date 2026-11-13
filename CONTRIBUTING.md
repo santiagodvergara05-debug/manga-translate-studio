@@ -32,9 +32,7 @@ Maintainers are responsible for clarifying and enforcing our standards of accept
 - **Decoupled Architecture**: UI views (`main_window.py`, `canvas.py`, `widgets.py`) must never contain network logic, raw prompt engineering, or direct provider calls. Business logic resides in dedicated managers (`PromptManager`, `CredentialManager`, `AIClientManager`).
 - **Standardized Interfaces**: Every provider must normalize API responses into the unified `TranslationResult` interface using canonical `ProviderStatus` enums.
 - **Language Standard**: All source code comments, docstrings, variable names, log messages, and error traces must remain in **technical English**.
-- **Decoupled Architecture**: UI views (`main_window.py`, `canvas.py`, `widgets.py`) must never contain network logic, raw prompt engineering, or direct provider calls. Business logic resides in dedicated managers (`PromptManager`, `CredentialManager`, `AIClientManager`).
-- **Standardized Interfaces**: Every provider must normalize API responses into the unified `TranslationResult` interface using canonical `ProviderStatus` enums.
-- **Language Standard**: All source code comments, docstrings, variable names, log messages, and error traces must remain in **technical English**.
+- **Usage Data Privacy**: Never commit API keys, tokens, user rules, local usage history, account identifiers, or personal pricing configuration. Runtime state belongs in the git-ignored `cache/` folder.
 
 ---
 
@@ -233,7 +231,28 @@ Open `src/backend/credential_manager.py` and declare the default credential sche
 
 ---
 
-## 3. Pull Request Submission Checklist
+### Provider Usage and Cache Metadata
+
+- Report only usage values returned by the provider. Use normalized fields such as `prompt_tokens`, `output_tokens`, `total_tokens`, `request_count`, and, when actually reported, `cache_tokens` and `thought_tokens`.
+- Do not infer cache hits from prompt length or elapsed time. Omit `cache_tokens` when the provider gives no cache metadata; an explicit zero means the provider reported zero cached tokens.
+- Keep provider-specific quota behavior in the provider or usage layer. The local Gemini RPD meter is Gemini-specific; do not present it as a universal provider limit.
+- Preserve the shared request path and system/user prompt separation when adding provider payloads. Do not persist user prompts or images for caching without an explicit product requirement.
+
+---
+
+## 3. Community Price Table Contributions
+
+Reference rate files live in `Pricing_Models_Providers/`. They are downloaded and imported by users; they are separate from local editable `cache/pricing_tables.json`.
+
+- Use the JSON format documented in `Pricing_Models_Providers/README.md`: a top-level `prices` array with provider ID, model ID or prefix, plan, and USD-per-million-token rates.
+- Keep numeric rates as JSON numbers and use `null` for rates that are not published or do not apply. Do not put currency signs or formatted text in numeric fields.
+- Verify every changed rate against an authoritative provider pricing source. Include the source URL, date checked, affected models/plans, and any limitations in the PR description or file notes.
+- Keep provider tables independent so importing a new table updates matching provider/model/plan rows without deleting unrelated rates.
+- Do not add personal usage records, account information, API credentials, or local cache files to the reference folder.
+
+---
+
+## 4. Pull Request Submission Checklist
 
 Before opening a Pull Request, please ensure all items on this checklist are satisfied:
 
@@ -273,6 +292,14 @@ python main.py
 * [ ] Vector icon added to `assets/icon_provider/<provider_id>.svg`.
 * [ ] Added default schema in `CredentialManager`.
 * [ ] Registered in `AIClientManager.PROVIDERS`.
+* [ ] Usage and cache token fields reflect provider-reported metadata only; missing cache metadata is not represented as a confirmed cache miss.
+
+### Price Table PR Checklist
+
+* [ ] JSON parses and follows the `prices` schema documented in `Pricing_Models_Providers/README.md`.
+* [ ] Provider/model/plan identifiers match application conventions; rates are USD per million tokens and use numbers or `null`.
+* [ ] Rates have been checked against an authoritative source, with source URL and verification date included in the PR.
+* [ ] No local usage history, credentials, account identifiers, or personal configuration is included.
 
 ### Core Engine, UI & Bug Fix PR Checklist
 

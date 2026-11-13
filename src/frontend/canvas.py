@@ -65,6 +65,8 @@ class MangaCanvas(QGraphicsView):
         if cv_img is None:
             self.image_item.setPixmap(QPixmap())
             self.scene.setSceneRect(0, 0, 0, 0)
+            self.verticalScrollBar().setValue(0)
+            self.horizontalScrollBar().setValue(0)
             return
 
         h, w = cv_img.shape[:2]
@@ -76,6 +78,7 @@ class MangaCanvas(QGraphicsView):
         # Use an explicit copy to guarantee memory stability across Qt threads
         self.image_item.setPixmap(QPixmap.fromImage(q_img.copy()))
         self.scene.setSceneRect(0, 0, w, h)
+        self.verticalScrollBar().setValue(0)
 
     def set_locked(self, locked: bool):
         """
@@ -99,10 +102,14 @@ class MangaCanvas(QGraphicsView):
 
     def wheelEvent(self, event):
         """
-        Handles smooth incremental zooming centered under the cursor with boundary clamping.
+        Scrolls the page normally; hold Ctrl while scrolling to zoom.
         """
         if self.is_locked:
             event.ignore()
+            return
+
+        if not (event.modifiers() & Qt.ControlModifier):
+            super().wheelEvent(event)
             return
 
         delta = event.angleDelta().y() or event.angleDelta().x()
