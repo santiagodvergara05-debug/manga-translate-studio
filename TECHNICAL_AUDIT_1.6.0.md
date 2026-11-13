@@ -60,3 +60,51 @@ Static maintenance review of the Python modules, runtime JSON flows, UI-to-backe
 
 - `git diff --check` completed without whitespace errors.
 - Python runtime/lint checks were not run in this audit environment. The changes should be exercised in the project's Windows virtual environment before release.
+
+## Follow-up static audit (2026-11-13)
+
+The pass reviewed all tracked Python modules under `src/`, plus `main.py`, `build_exe.py`, and `generate_icons.py`. It traced UI signal handlers, worker dispatch, provider registry entries, and references for suspicious low-use methods. This is a source-level audit only; it does not certify runtime behavior or third-party API compatibility.
+
+### Confirmed findings to address before release
+
+#### High — closing the window can leave a translation QThread running
+
+- `MainWindow.closeEvent` only handles `is_batching`; a single-page request runs in `TranslatorPanel.active_worker` and is not joined or otherwise stopped on close.
+- During batch close, `QThread.quit()` only asks the event loop to exit. The worker is executing a synchronous provider call and `wait(1000)` can time out while the HTTP request is still running (provider request timeouts are much longer). The handler then accepts the close event regardless.
+- This creates a shutdown race and can produce a running-thread-destroyed error or an abrupt exit. A follow-up should use a safe close-pending state: request cancellation where supported, keep the window alive while the synchronous request finishes, and close only after worker completion. A forced thread termination is not recommended because it can corrupt Python/Qt state.
+- References: `src/frontend/main_window.py:891-909`, `src/backend/translator.py:1130-1173`, `src/backend/ai_client.py:230-281`, and provider request timeouts in `src/backend/providers/gemini_provider.py:172` / `ollama_provider.py:159,244`.
+
+#### Medium — request pacing is global across providers, despite its per-provider description
+
+- `RequestPacer` stores last-start timestamps by provider, but holds one class-wide lock while sleeping. If a request for one provider is waiting for its interval, another provider cannot pass the same lock. Thus the implementation couples independent providers and can delay unrelated work.
+- This is not dead code; it is on the request path for both single-page and batch translations. The next change should use per-provider locks (or reserve start times under a short global critical section and sleep after releasing it).
+- Reference: `src/backend/ai_client.py:30-50,178`.
+
+#### Medium — source-mode debug logging exposes prompts and model output by default
+
+- `DEBUG_AI_LOGS` defaults to enabled in non-frozen runs because `MTS_DEBUG` defaults to `"1"`. The request log prints the full system prompt and page/context prompt, and response logging can print raw provider output and extracted text.
+- These logs can contain user rules, story text, and sensitive page content. Packaged builds disable this path, but developers and source users are opted in unless they explicitly set `MTS_DEBUG=0`.
+- Before public source distribution, consider defaulting diagnostics off and requiring an explicit opt-in. Keep token/status diagnostics available without content logging.
+- References: `src/backend/ai_client.py:27,73-107,165-174`; Gemini thought summaries are also requested under the same default in `src/backend/providers/gemini_provider.py:163-169`.
+
+### Dead-code and connection review
+
+- No evidence was found that provider implementations registered in `PROVIDERS` are disconnected. Gemini and Ollama are active; OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek deliberately inherit `ProviderScaffold` and are surfaced as unavailable placeholders. Keep them documented as scaffolds until real integrations replace them.
+- `MainWindow.set_page_status` is connected to translation result/error paths; `mark_current_modified` is called by the editor change handler. Neither is dead.
+- `CredentialManager.update_provider_credentials` has no internal callers in the current source tree. It is fully implemented and documented, so classify it as an unused public/helper candidate rather than deleting it without checking external integrations.
+- `Paths.ensure_directories` has no internal caller but explicitly promises backward compatibility to external integrations. Retain it unless that compatibility promise is intentionally removed.
+- `IconProvider`'s `"lock"` alias maps to the same asset as `"processing"`; no call site currently requests the alias. It is a safe cleanup candidate after confirming no external plugin depends on the state key.
+- `BaseAIProvider` abstract methods and `ProviderScaffold` error results are required extension/fallback behavior, not dead code.
+- The removed `src/utils/history.py` remains absent from the source tree and README tree.
+
+### Comments and maintainability
+
+- Complex lifecycle and persistence code already has useful docstrings/comments in `ProjectResetController`, `UsageManager`, `RequestPacer`, batch orchestration, prompt composition, and provider request handling. Avoid adding comments that merely restate a function name or each obvious assignment.
+- The most valuable next comments are alongside the eventual fixes for worker shutdown and per-provider pacing, since they should explain lifecycle and concurrency invariants rather than narrate syntax.
+- Localization remains deferred. Keep user-facing text identifiable during the later extraction pass, and do not translate provider payload/system rules as a side effect of this audit.
+
+### Audit disposition
+
+- Confirmed high/medium findings are recorded above; they were not silently changed during this documentation pass because they affect thread lifecycle, request scheduling, and privacy defaults.
+- Unreferenced items are classified as candidates with compatibility context instead of automatically deleted. Static text search cannot prove that a public helper is unused by external scripts.
+- No tests or GUI session were run. Recheck the thread shutdown behavior and cross-provider pacing in the Windows environment before calling the audit release-ready.

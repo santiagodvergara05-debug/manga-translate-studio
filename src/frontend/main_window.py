@@ -889,7 +889,10 @@ class MainWindow(QMainWindow):
         super().keyReleaseEvent(event)
 
     def closeEvent(self, event: QCloseEvent):
-        """Safely stops active background worker threads prior to window destruction."""
+        """Attempts to stop batch work before closing; see the shutdown audit note."""
+        # AUDIT: a provider call runs synchronously inside its worker. quit() cannot
+        # interrupt it, and this bounded wait can expire while it is still running.
+        # Single-page workers also need to be included in a future close-pending flow.
         if self.is_batching:
             self.stop_requested = True
             self.batch_queue.clear()

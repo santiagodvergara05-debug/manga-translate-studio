@@ -1,6 +1,6 @@
 # Manga Translate Studio 1.6.0 — Change Log
 
-This document records the application changes made for the 1.6.0 development cycle. The desktop title may continue to show **1.6.0 BETA** until the stable release is prepared.
+This document records the application changes made for the 1.6.0 development cycle. The desktop title now show **1.6.0 BETA 2** until the stable release is prepared.
 
 ## Beta 2 — changes since the published Beta 1
 

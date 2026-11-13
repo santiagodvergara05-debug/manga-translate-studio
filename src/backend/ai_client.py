@@ -22,11 +22,13 @@ from src.backend.providers.openrouter_provider import OpenRouterProvider
 from src.backend.providers.deepseek_provider import DeepSeekProvider
 from src.backend.usage_manager import UsageManager
 
+# Source-mode diagnostics include prompts and provider responses; defaulting MTS_DEBUG
+# to 1 is convenient for development but can write private page text to the console.
 DEBUG_AI_LOGS = (not getattr(sys, "frozen", False)) and os.environ.get("MTS_DEBUG", "1") == "1"
 
 
 class RequestPacer:
-    """Serializes translation starts per provider to reduce API bursts."""
+    """Spaces request starts; see the shared-lock note in wait() before changing it."""
 
     _lock = threading.Lock()
     _last_request_by_provider = {}
@@ -36,6 +38,9 @@ class RequestPacer:
     def wait(cls, provider: str, mode: str = "low"):
         interval = cls._intervals.get(str(mode).lower(), cls._intervals["low"])
         provider_id = str(provider).lower()
+        # AUDIT: this global lock is held during sleep, so waiting for one provider
+        # currently blocks other providers too. Keep this visible until pacing is
+        # changed to reserve provider-specific start times without sleeping locked.
         with cls._lock:
             now = time.monotonic()
             previous = cls._last_request_by_provider.get(provider_id)
