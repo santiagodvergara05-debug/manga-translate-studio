@@ -45,7 +45,7 @@ Do not copy a provider example that returns a fixed successful connection or inv
 
 Reference price files are in `Pricing_Models_Providers/` and are imported by users; they are separate from the private runtime table in `cache/pricing_tables.json`.
 
-- Follow the schema and import behavior documented in `Pricing_Models_Providers/README.md`.
+- Follow the schema and import behavior documented in [`Pricing_Models_Providers/PRICING_TABLES.md`](Pricing_Models_Providers/PRICING_TABLES.md).
 - Use numeric USD-per-million-token rates or `null` when a rate is not published or does not apply. Do not put currency symbols in numeric fields.
 - Verify changed rates against the provider's official pricing source. Include the source URL, date checked, affected models/plans, effective date, and any limitations in the PR.
 - Do not add account information, API credentials, usage records, or personal settings.
@@ -94,7 +94,7 @@ Complete the checks that apply to your changes and report any that could not be 
 
 ### Price-reference changes
 
-- [ ] JSON parses and follows the documented `prices` schema.
+- [ ] JSON parses and follows the `prices` schema in [`PRICING_TABLES.md`](Pricing_Models_Providers/PRICING_TABLES.md).
 - [ ] Changed rates include authoritative sources and verification dates.
 - [ ] No local usage or account data is included.
 
