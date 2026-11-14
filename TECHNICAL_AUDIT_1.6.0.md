@@ -1,4 +1,4 @@
-# Technical Audit — Manga Translate Studio 1.6.0 Beta 3
+# Technical Audit — Manga Translate Studio 1.6.0
 
 Audit date: 2026-11-14
 Purpose: final source and maintenance review before preparing the Windows executable.
@@ -31,7 +31,7 @@ The application could not be launched or compiled from this audit environment be
 
 - The current locale index lists ten interface languages and the application loads the selected catalog rather than eagerly parsing every language file.
 - README now describes English as the primary source catalog, additional catalogs generically, and `locales/index.json` as the available-language manifest. It intentionally does not enumerate locale JSON files in the tree.
-- The Beta 3 changelog records the added catalogs, UI work, and audit changes.
+- The 1.6.0 changelog records the added catalogs, UI work, and audit changes.
 
 ## Findings and disposition
 
@@ -91,3 +91,15 @@ Before publishing the executable, smoke-test at minimum:
 ## Audit conclusion
 
 The confirmed source-level issues found in request pacing, diagnostic defaults, and worker shutdown have been corrected. No additional confirmed dead application path was found; low-use helpers and provider scaffolds are retained where they serve compatibility or extension purposes. The code is ready for developer-side Windows validation, but this audit does not claim that compilation, GUI checks, API integration checks, or executable packaging have passed.
+
+## Follow-up required before the next major-version executable
+
+This section tracks work proposed after the 1.6.0 audit. These features are not part of the reviewed 1.6.0 implementation, and the findings above do not certify them.
+
+- The next major version is planned to add an optional English equivalent for SFX and a text-extraction-only workflow that saves a dedicated JSON format.
+- Before packaging that version, audit the new option persistence, conditional prompt/schema fields, provider normalization, JSON schema validation and writes, import/export boundaries, UI mode switching, batch behavior, project reset, locale strings, and packaged resources.
+- Review code connectivity and dead code after implementation. Preserve the existing translation and Manga Cleaner `.TXT` workflows unless a separately reviewed change explicitly replaces them.
+- Record the new audit with its own date and version scope, either in a clearly labeled follow-up to this file or in a version-specific audit document. Do not retroactively describe the features as covered by this 1.6.0 audit.
+- Run and record Windows locale release checks, compilation, GUI/provider checks, and clean-directory executable smoke tests. The 1.6.0 audit's unrun validation items remain separate from this future release gate.
+
+See `ROADMAP_NEXT_MAJOR_VERSION.md` for the implementation areas and acceptance checklist.
