@@ -54,7 +54,7 @@ The table uses these fields:
 | Language | Localization credits | Human audit | Catalog status | Localization version |
 |---|---|---|---|---|
 | English (`en`) | Project source catalog | N/A — source language | Included; source catalog | 1.6.0 |
-| Spanish (`es`) | `santiagodvergara05-debug`; Google Gemini (LLM-assisted) | Yes — audited, corrected, and refined by the maintainer, a native Spanish speaker | Included; structurally verified | 1.6.0 |
+| Spanish (`es`) | Google Gemini (LLM-assisted) | Yes — audited, corrected, and refined by the maintainer, `santiagodvergara05-debug` | Included; structurally verified | 1.6.0 |
 | Portuguese (Brazil) (`pt-BR`) | Google Gemini (LLM-assisted) | No — requires human review | Included; structurally verified | 1.6.0 |
 | French (`fr`) | Google Gemini (LLM-assisted) | No — requires human review | Included; structurally verified | 1.6.0 |
 | Chinese, Simplified (`zh-CN`) | Google Gemini (LLM-assisted) | No — requires human review | Included; structurally verified | 1.6.0 |
