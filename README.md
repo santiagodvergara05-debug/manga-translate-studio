@@ -58,7 +58,7 @@ Manga Translate Studio/
 │   ├── <language>.json                # Additional catalogs; see index.json
 │   └── index.json                     # Available languages and source fingerprints
 ├── Pricing_Models_Providers/          # Community JSON price references for import
-│   ├── README.md                      # Price schema and contribution guidance
+│   ├── PRICING_TABLES.md              # Price schema, import behavior, and contribution guidance
 │   ├── google_models.json             # Google Gemini and Gemma reference rates
 │   └── ollama_models.json             # Ollama Cloud reference rates
 ├── cache/                             # Runtime user data (git-ignored; created by the app)
