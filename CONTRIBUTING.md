@@ -38,6 +38,8 @@ Maintainers are responsible for clarifying and enforcing our standards of accept
 
 ## 1. How to Add a New Language
 
+This section covers **manga translation languages** (text recognized from pages and translated output). It does not configure the application interface language; for UI catalogs, follow [TRANSLATION.md](TRANSLATION.md).
+
 Language definitions, dialect constraints, and target-specific SFX localization rules reside exclusively in `src/backend/languages.py`.
 
 ### Step 1: Register Language Definitions
@@ -92,6 +94,10 @@ def get_sfx_rule_for_target(target_display_text: str, is_asian_src: bool) -> str
 ```
 
 ---
+
+## UI Localization Contributions
+
+UI catalogs are maintained separately from `src/backend/languages.py`. Add source strings to `locales/en.json`, request them with `src.utils.i18n.tr()`, and keep IDs and logic values independent from translated labels. Run `python tools/check_locales.py --approve` to structurally verify secondary catalogs and `python tools/check_locales.py --release` before packaging. The verifier checks keys, placeholders, and fingerprints; it does not judge translation quality. Describe human review status accurately in the PR. Every catalog must follow the [localization integrity and review policy](TRANSLATION.md#localization-integrity-and-review-policy); structural approval does not replace review against the English source.
 
 ## 2. How to Add a New AI Provider
 
@@ -268,6 +274,9 @@ python -m py_compile src/backend/<modified_file>.py
 python main.py
 
 ```
+* [ ] New or changed user-visible text uses `tr()`/`tr_label()` and exists in `locales/en.json`.
+* [ ] Locale catalogs and `locales/index.json` pass the locale checker; changed translations have current approval fingerprints.
+* [ ] Startup loads only the selected locale catalog; catalog loading does not read every language into memory.
 
 
 ### AI Agent Assistance Checklist
@@ -288,6 +297,9 @@ AI coding agents and other AI tools may be used to explore, explain, draft, or m
 * [ ] If applicable, Asian logographic scripts are added to `ASIAN_LANG_CODES`.
 * [ ] SFX onomatopoeia conventions and capitalization directives are defined in `get_sfx_rule_for_target`.
 * [ ] Verified that text continuity and inverted punctuation rules (e.g. `¿` / `¡` for Spanish) function properly.
+* [ ] Every translated value preserves the English source meaning, intent, and tone; no unrelated text or prohibited material was introduced.
+* [ ] Placeholder names, metadata, and user-visible catalog content were reviewed in context; the PR states who translated and who performed the human language review.
+* [ ] The catalog follows the [localization integrity and review policy](TRANSLATION.md#localization-integrity-and-review-policy); any reported issue is addressed against the source key and documented in the PR or issue.
 
 ### New Provider PR Checklist
 

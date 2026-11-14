@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from src.utils.i18n import tr
 
 
 class UsagePricingDialog(QDialog):
@@ -34,7 +35,7 @@ class UsagePricingDialog(QDialog):
         self.connection_profile_name = connection_profile_name or "Legacy / unassigned"
         self.connection_profiles = connection_profiles or {}
         self.data = usage_manager.load_tables()
-        self.setWindowTitle("Usage & Pricing")
+        self.setWindowTitle(tr("usage_pricing.usage_pricing"))
         self.setMinimumSize(940, 580)
         self.resize(1080, 680)
         self.setStyleSheet("QDialog { background: #121217; color: #e0e0e0; }")
@@ -47,7 +48,7 @@ class UsagePricingDialog(QDialog):
 
         footer = QHBoxLayout()
         footer.addStretch()
-        self.btn_close = QPushButton("Save & Close")
+        self.btn_close = QPushButton(tr("usage_pricing.save_close"))
         self.btn_close.clicked.connect(self._save_and_close)
         footer.addWidget(self.btn_close)
         layout.addLayout(footer)
@@ -81,17 +82,16 @@ class UsagePricingDialog(QDialog):
         self.lbl_usage_summary.setWordWrap(True)
         layout.addWidget(self.lbl_usage_summary)
         note = QLabel(
-            "History stores token counts, model names, and the saved connection profile ID; it does not store prompts, images, or API keys. "
-            "Older entries without a connection profile appear as Legacy / unassigned."
+            tr("usage_pricing.history_stores_token_counts_model_names")
         )
         note.setStyleSheet("color: #888899; font-size: 10px;")
         layout.addWidget(note)
 
         filter_row = QHBoxLayout()
-        filter_row.addWidget(QLabel("Provider:"))
+        filter_row.addWidget(QLabel(tr("common.provider")))
         self.provider_filter = QComboBox()
-        self.provider_filter.addItem(f"Current ({self.provider.title()})", self.provider)
-        self.provider_filter.addItem("All providers", "*")
+        self.provider_filter.addItem(tr("usage_pricing.current_title", title=self.provider.title()), self.provider)
+        self.provider_filter.addItem(tr("usage_pricing.all_providers"), "*")
         known_providers = sorted({
             str(row.get("provider", "")).lower()
             for row in self.usage_manager.load_history()
@@ -102,9 +102,9 @@ class UsagePricingDialog(QDialog):
                 self.provider_filter.addItem(provider_name.title(), provider_name)
         filter_row.addWidget(self.provider_filter)
         filter_row.addStretch()
-        self.clear_history_button = QPushButton("Clear all history")
+        self.clear_history_button = QPushButton(tr("usage_pricing.clear_all_history"))
         self.clear_history_button.setToolTip(
-            "Delete request records. Price tables and Gemini RPD counters are kept."
+            tr("usage_pricing.delete_request_records_price_tables_and")
         )
         self.clear_history_button.clicked.connect(self._clear_usage_history)
         filter_row.addWidget(self.clear_history_button)
@@ -116,7 +116,7 @@ class UsagePricingDialog(QDialog):
         layout.addWidget(self.history_table, 1)
         self.provider_filter.currentIndexChanged.connect(self._refresh_usage_history)
         self._refresh_usage_history()
-        self.tabs.addTab(tab, "Usage")
+        self.tabs.addTab(tab, tr("usage_pricing.usage"))
 
     def _refresh_usage_history(self, *_):
         if not hasattr(self, "history_table"):
@@ -162,10 +162,7 @@ class UsagePricingDialog(QDialog):
         ) if self.model else None
         cache_text = f"Recent cache match: {cache_pct:g}%" if cache_pct is not None else "Recent cache match: not reported"
         self.lbl_usage_summary.setText(
-            f"Showing: {provider_label} · Connection: {self.connection_profile_name}\n"
-            f"Active model: {self.model or 'No model selected'} · Tracked requests: {request_rows} · "
-            f"Priced requests: {priced_rows} · Estimated total: ${total:.6f}\n"
-            f"{cache_text} (last 10 requests for the active provider/model)"
+            tr("usage_pricing.showing_provider_label_connection_connec", provider_label=provider_label, connection_profile_name=self.connection_profile_name, value=self.model or 'No model selected', request_rows=request_rows, priced_rows=priced_rows, total=format(total, '.6f'), cache_text=cache_text)
         )
 
     def _clear_usage_history(self):
@@ -173,9 +170,8 @@ class UsagePricingDialog(QDialog):
             return
         answer = QMessageBox.question(
             self,
-            "Clear all usage history",
-            "Delete all recorded usage history for every provider and connection?\n\n"
-            "Price tables and Gemini RPD counters will remain unchanged.",
+            tr("usage_pricing.clear_all_usage_history"),
+            tr("usage_pricing.delete_all_recorded_usage_history_for"),
             QMessageBox.Yes | QMessageBox.Cancel,
             QMessageBox.Cancel,
         )
@@ -185,7 +181,7 @@ class UsagePricingDialog(QDialog):
             self.usage_manager.clear_history()
             self._refresh_usage_history()
         except OSError as exc:
-            QMessageBox.warning(self, "Could not clear history", str(exc))
+            QMessageBox.warning(self, tr("usage_pricing.could_not_clear_history"), str(exc))
 
     def _build_prices_tab(self):
         tab = QWidget()
@@ -194,9 +190,7 @@ class UsagePricingDialog(QDialog):
         self.lbl_price_status.setStyleSheet("color: #ff5252; font-weight: bold;")
         layout.addWidget(self.lbl_price_status)
         note = QLabel(
-            "Editable price list in USD per 1 million tokens. Cached input is a separate rate; leave it blank "
-            "when the provider has no discounted cached-input rate. Plan values: any, free, paid, or off-peak. "
-            "Ollama off-peak rates are selected automatically using UTC. Update prices when providers change them."
+            tr("usage_pricing.editable_price_list_in_usd_per")
         )
         note.setWordWrap(True)
         note.setStyleSheet("color: #a0a0ad; font-size: 10px;")
@@ -221,15 +215,15 @@ class UsagePricingDialog(QDialog):
         self._update_price_status()
 
         row = QHBoxLayout()
-        add = QPushButton("Add price")
+        add = QPushButton(tr("usage_pricing.add_price"))
         add.clicked.connect(self._add_price_row)
-        remove = QPushButton("Remove selected")
+        remove = QPushButton(tr("usage_pricing.remove_selected"))
         remove.clicked.connect(lambda: self.prices_table.removeRow(self.prices_table.currentRow()) if self.prices_table.currentRow() >= 0 else None)
-        remove_all = QPushButton("Remove all")
+        remove_all = QPushButton(tr("usage_pricing.remove_all"))
         remove_all.clicked.connect(self._remove_all_prices)
-        import_btn = QPushButton("Import JSON")
+        import_btn = QPushButton(tr("usage_pricing.import_json"))
         import_btn.clicked.connect(self._import_prices)
-        export_btn = QPushButton("Export JSON")
+        export_btn = QPushButton(tr("usage_pricing.export_json"))
         export_btn.clicked.connect(self._export_prices)
         row.addWidget(add)
         row.addWidget(remove)
@@ -238,16 +232,15 @@ class UsagePricingDialog(QDialog):
         row.addWidget(import_btn)
         row.addWidget(export_btn)
         layout.addLayout(row)
-        self.tabs.addTab(tab, "Prices")
+        self.tabs.addTab(tab, tr("usage_pricing.prices"))
 
     def _remove_all_prices(self):
         if self.prices_table.rowCount() == 0:
             return
         answer = QMessageBox.question(
             self,
-            "Remove all prices",
-            "Remove every price row from the table? This includes all imported providers.\n"
-            "The change will be saved when you click Save & Close.",
+            tr("usage_pricing.remove_all_prices"),
+            tr("usage_pricing.remove_every_price_row_from_the"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -361,14 +354,14 @@ class UsagePricingDialog(QDialog):
             )
         model_text = self.model or "selected model"
         if configured:
-            self.lbl_price_status.setText(f"{model_text}: Price configured")
+            self.lbl_price_status.setText(tr("usage_pricing.model_text_price_configured", model_text=model_text))
             self.lbl_price_status.setStyleSheet("color: #00e676; font-weight: bold;")
         else:
-            self.lbl_price_status.setText(f"{model_text}: Not configured")
+            self.lbl_price_status.setText(tr("usage_pricing.model_text_not_configured", model_text=model_text))
             self.lbl_price_status.setStyleSheet("color: #ff5252; font-weight: bold;")
 
     def _import_prices(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Import price table", "", "JSON files (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, tr("usage_pricing.import_price_table"), "", tr("usage_pricing.json_files_json"))
         if not path:
             return
         try:
@@ -385,11 +378,11 @@ class UsagePricingDialog(QDialog):
             self._load_price_rows(self.data["prices"])
             self._update_price_status()
             QMessageBox.information(
-                self, "Price table imported",
-                f"Imported {len(imported)} price row(s). Existing rows for other models and providers were kept.",
+                self, tr("usage_pricing.price_table_imported"),
+                tr("usage_pricing.imported_count_price_row_s_existing", count=len(imported)),
             )
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Import failed", str(exc))
+            QMessageBox.warning(self, tr("usage_pricing.import_failed"), str(exc))
 
     @staticmethod
     def _price_key(row: dict) -> tuple[str, str, str]:
@@ -400,14 +393,14 @@ class UsagePricingDialog(QDialog):
         )
 
     def _export_prices(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export price table", "pricing_tables.json", "JSON files (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, tr("usage_pricing.export_price_table"), "pricing_tables.json", tr("usage_pricing.json_files_json"))
         if not path:
             return
         try:
             self.usage_manager.export_prices(path, self._prices_from_table())
-            QMessageBox.information(self, "Price table exported", f"Saved to:\n{path}")
+            QMessageBox.information(self, tr("usage_pricing.price_table_exported"), tr("usage_pricing.saved_to_path", path=path))
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(self, tr("usage_pricing.export_failed"), str(exc))
 
     @staticmethod
     def _rate_display(value):
@@ -417,6 +410,6 @@ class UsagePricingDialog(QDialog):
         try:
             self.usage_manager.save_prices(self._prices_from_table())
         except (OSError, ValueError) as exc:
-            QMessageBox.warning(self, "Could not save", str(exc))
+            QMessageBox.warning(self, tr("usage_pricing.could_not_save"), str(exc))
             return
         self.accept()

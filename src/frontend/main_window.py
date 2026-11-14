@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QLabel, QPushButton, QFrame, QSplitter, QFileDialog,
     QMessageBox, QGraphicsView, QProgressBar, QCheckBox, QDialog,
-    QComboBox,
+    QComboBox, QMenu, QSizePolicy,
 )
 from PySide6.QtCore import Qt, QTimer, QThread
 from PySide6.QtGui import QCloseEvent
@@ -26,6 +26,7 @@ from src.frontend.widgets import FileListWidget
 from src.frontend.canvas import MangaCanvas
 from src.frontend.help_system import HelpSystem
 from src.utils.config import Config
+from src.utils import i18n
 from src.utils.logger import logger
 from src.backend.translator import TranslatorPanel, TranslationScriptEngine
 from src.backend.ai_client import AIClientManager, MultimodalTranslationWorker
@@ -33,6 +34,7 @@ from src.backend.providers.base_provider import ProviderStatus, TranslationResul
 from src.frontend.project_reset import ProjectResetController
 from src.backend.usage_manager import UsageManager
 from src.frontend.usage_pricing import UsagePricingDialog
+from src.utils.i18n import tr
 
 # /////////////////////////////////#
 #          PAGE STATE ENUM         #
@@ -61,7 +63,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(f"{Config.APP_NAME} v{Config.VERSION} - Script Generator")
+        self.setWindowTitle(tr("main.app_name_v_version_script_generator", app_name=Config.APP_NAME, version=Config.VERSION))
         self.resize(1420, 860)
 
         self.usage_manager = UsageManager()
@@ -119,83 +121,119 @@ class MainWindow(QMainWindow):
         # /////////////////////////////////#
         self.nav = QFrame()
         self.nav.setObjectName("NavBar")
-        self.nav.setFixedHeight(88)
-        nav_lay = QHBoxLayout(self.nav)
+        self.nav.setMinimumHeight(118)
+        nav_lay = QVBoxLayout(self.nav)
+        nav_lay.setContentsMargins(10, 6, 10, 6)
+        nav_lay.setSpacing(4)
+        nav_actions = QHBoxLayout()
+        nav_status = QHBoxLayout()
+        nav_actions.setSpacing(8)
+        nav_status.setSpacing(8)
 
         title = QLabel(f"{Config.APP_NAME.upper()} {Config.VERSION}")
         title.setStyleSheet(f"color: {Config.COLOR_ACCENT}; font-weight: bold; font-size: 17px;")
+        title.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Preferred)
 
-        self.btn_reset = QPushButton("RESET")
+        self.btn_reset = QPushButton(tr("main.reset"))
         self.btn_reset.setObjectName("ActionBtn")
-        self.btn_reset.setToolTip("Close current project and purge application memory")
-        self.btn_reset.setFixedSize(65, 30)
+        self.btn_reset.setToolTip(tr("main.close_current_project_and_purge_applicat"))
+        self.btn_reset.setFixedHeight(30)
         self.btn_reset.clicked.connect(self.on_project_reset_requested)
 
-        self.lbl_usage_summary = QLabel("Provider: loading…")
+        self.lbl_usage_summary = QLabel(tr("main.provider_loading"))
         self.lbl_usage_summary.setTextFormat(Qt.RichText)
         self.lbl_usage_summary.setStyleSheet("font-size: 10px; font-weight: bold;")
-        self.lbl_usage_summary.setMinimumWidth(300)
-        self.lbl_usage_summary.setMaximumWidth(370)
+        self.lbl_usage_summary.setMinimumWidth(250)
+        self.lbl_usage_summary.setMaximumWidth(520)
+        self.lbl_usage_summary.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self.lbl_usage_summary.setWordWrap(True)
         self.header_info_card = QFrame()
         self.header_info_card.setObjectName("HeaderInfoCard")
         header_card_layout = QVBoxLayout(self.header_info_card)
         header_card_layout.setContentsMargins(9, 5, 9, 5)
         header_card_layout.addWidget(self.lbl_usage_summary)
+        self.header_info_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
 
         # Keep the compact green quota status in the header; editable RPD values
         # now live in API Settings alongside the selected Gemini connection.
         self.lbl_rpd_status = QLabel()
         self.lbl_rpd_status.setStyleSheet("color: #00e676; font-size: 9px; font-weight: bold;")
-        self.lbl_rpd_status.setMinimumWidth(105)
-        self.lbl_rpd_status.setMaximumWidth(125)
+        self.lbl_rpd_status.setMinimumWidth(92)
+        self.lbl_rpd_status.setMaximumWidth(145)
         self.lbl_rpd_status.setAlignment(Qt.AlignCenter)
-        self.lbl_rpd_status.setToolTip("Gemini daily request usage and configured limit.")
+        self.lbl_rpd_status.setToolTip(tr("main.gemini_daily_request_usage_and_configure"))
         self.lbl_rpd_status.setVisible(False)
 
-        pacing_tooltip = (
-            "Minimum delay between translation requests (tracked per provider):\n"
-            "Theoretical maximum request starts per minute from the configured minimum delay:\n"
-            "LOW: 4.1 seconds between requests — about 14.6 RPM maximum.\n"
-            "HIGH: 1.5 seconds between requests — 40 RPM maximum.\n"
-            "MAX: 0.5 seconds between requests — 120 RPM maximum.\n"
-            "MAX can trigger provider rate limits or HTTP 429 responses.\n"
-            "These are theoretical ceilings; API processing time can make the actual rate lower.\n"
-            "Applies to single-page and batch translations."
-        )
+        pacing_tooltip = tr("main.request_pacing_tooltip")
         self.request_pacing_combo = QComboBox()
-        self.request_pacing_combo.addItem("LOW", "low")
-        self.request_pacing_combo.addItem("HIGH", "high")
-        self.request_pacing_combo.addItem("MAX", "max")
-        self.request_pacing_combo.setFixedWidth(78)
+        self.request_pacing_combo.addItem(tr("main.low"), "low")
+        self.request_pacing_combo.addItem(tr("main.high"), "high")
+        self.request_pacing_combo.addItem(tr("main.max"), "max")
+        # Let translated pace names determine the combo width instead of
+        # clipping them to the former English-only fixed width.
+        self.request_pacing_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.request_pacing_combo.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self.request_pacing_combo.setToolTip(pacing_tooltip)
-        self.request_pacing_label = QLabel("API pace")
+        self.request_pacing_label = QLabel(tr("main.api_pace"))
+        # Give translated labels breathing room, especially for scripts whose
+        # glyphs need more visual separation at the start/end of a short label.
+        self.request_pacing_label.setContentsMargins(6, 0, 6, 0)
         self.request_pacing_label.setToolTip(pacing_tooltip)
 
-        self.btn_usage = QPushButton("USAGE / PRICES")
+        # This menu changes only UI localization, never manga translation
+        # languages. Its catalog list is discovered from locales/index.json.
+        self.btn_ui_language = QPushButton()
+        self.btn_ui_language.setObjectName("ActionBtn")
+        self.btn_ui_language.setFixedHeight(30)
+        self.btn_ui_language.setMinimumWidth(112)
+        self.btn_ui_language.setMaximumWidth(300)
+        self.btn_ui_language.setToolTip(tr("settings.language.label"))
+        self.ui_language_menu = QMenu(self)
+        automatic_action = self.ui_language_menu.addAction(tr("settings.language.auto"))
+        automatic_action.triggered.connect(
+            lambda _checked=False: self._save_ui_language("auto")
+        )
+        self.ui_language_menu.addSeparator()
+        for language_code, display_name in i18n.available_languages():
+            action = self.ui_language_menu.addAction(display_name)
+            action.triggered.connect(
+                lambda _checked=False, code=language_code:
+                    self._save_ui_language(code)
+            )
+        self.btn_ui_language.setMenu(self.ui_language_menu)
+        self._update_ui_language_button()
+
+        self.btn_usage = QPushButton(tr("main.usage_prices"))
         self.btn_usage.setFixedHeight(30)
-        self.btn_usage.setToolTip("View request history and editable provider prices.")
+        self.btn_usage.setToolTip(tr("main.view_request_history_and_editable_provid"))
         self.btn_usage.clicked.connect(self.open_usage_pricing)
 
-        btn_help = QPushButton("HELP")
-        btn_help.setFixedSize(50, 30)
+        btn_help = QPushButton(tr("main.help"))
+        btn_help.setMinimumWidth(60)
+        btn_help.setFixedHeight(30)
         btn_help.clicked.connect(lambda: HelpSystem.show_guide(self))
 
-        self.btn_open = QPushButton("IMPORT FOLDER")
+        self.btn_open = QPushButton(tr("main.import_folder"))
         self.btn_open.setFixedHeight(30)
         self.btn_open.clicked.connect(self.on_open_folder)
 
-        nav_lay.addWidget(title)
-        nav_lay.addStretch()
-        nav_lay.addWidget(self.request_pacing_label)
-        nav_lay.addWidget(self.request_pacing_combo)
-        nav_lay.addWidget(self.header_info_card)
-        nav_lay.addWidget(self.lbl_rpd_status)
-        nav_lay.addWidget(self.btn_usage)
-        nav_lay.addSpacing(10)
-        nav_lay.addWidget(btn_help)
-        nav_lay.addWidget(self.btn_open)
-        nav_lay.addWidget(self.btn_reset)
+        # Separate branding/actions from provider status. The status card may
+        # grow with localized text instead of being clipped by a fixed-height bar.
+        nav_actions.addWidget(title)
+        nav_actions.addStretch(1)
+        nav_actions.addWidget(self.btn_usage)
+        nav_actions.addWidget(self.btn_ui_language)
+        nav_actions.addWidget(btn_help)
+        nav_actions.addWidget(self.btn_open)
+        nav_actions.addWidget(self.btn_reset)
+
+        nav_status.addWidget(self.request_pacing_label)
+        nav_status.addWidget(self.request_pacing_combo)
+        nav_status.addWidget(self.header_info_card, 1)
+        nav_status.addWidget(self.lbl_rpd_status)
+
+        nav_lay.addLayout(nav_actions)
+        nav_lay.addLayout(nav_status, 1)
         main_lay.addWidget(self.nav)
 
         split = QSplitter(Qt.Horizontal)
@@ -210,7 +248,7 @@ class MainWindow(QMainWindow):
         header_lay = QHBoxLayout()
         self.chk_all = QCheckBox()
         self.chk_all.toggled.connect(self.toggle_all_files)
-        lbl_assets = QLabel("PROJECT ASSETS")
+        lbl_assets = QLabel(tr("main.project_assets"))
         lbl_assets.setStyleSheet("color: #888888; font-weight: bold; font-size: 11px;")
         header_lay.addWidget(self.chk_all)
         header_lay.addWidget(lbl_assets)
@@ -220,14 +258,14 @@ class MainWindow(QMainWindow):
         self.file_list.itemClicked.connect(self.on_file_clicked)
 
         # Batch Action 1: Sequential AI Inference & Pause/Resume
-        self.btn_batch = QPushButton("▶ RUN BATCH TRANSLATE")
+        self.btn_batch = QPushButton(tr("common.run_batch_translate"))
         self.btn_batch.setObjectName("ActionBtn")
         self.btn_batch.setFixedHeight(34)
-        self.btn_batch.setToolTip("Start or pause sequential batch translation across selected pages.")
+        self.btn_batch.setToolTip(tr("main.start_or_pause_sequential_batch_translat"))
         self.btn_batch.clicked.connect(self.on_batch_button_clicked)
 
         # Batch Action 2: Stop / Abort Batch Completely
-        self.btn_cancel_batch = QPushButton("⏹ CANCEL BATCH")
+        self.btn_cancel_batch = QPushButton(tr("main.cancel_batch"))
         self.btn_cancel_batch.setFixedHeight(28)
         self.btn_cancel_batch.setStyleSheet("""
             QPushButton {
@@ -249,15 +287,15 @@ class MainWindow(QMainWindow):
                 color: #4a4a58;
             }
         """)
-        self.btn_cancel_batch.setToolTip("Immediately abort batch execution and retain completed pages.")
+        self.btn_cancel_batch.setToolTip(tr("main.immediately_abort_batch_execution_and_re"))
         self.btn_cancel_batch.setEnabled(False)
         self.btn_cancel_batch.clicked.connect(self.on_cancel_batch_clicked)
 
         # Batch Action 3: Export all audited pages to .TXT
-        self.btn_save_all_txt = QPushButton("💾 WRITE ALL TO .TXT")
+        self.btn_save_all_txt = QPushButton(tr("main.write_all_to_txt"))
         self.btn_save_all_txt.setFixedHeight(32)
         self.btn_save_all_txt.setStyleSheet("background-color: #1e1e28; border: 1px solid #00d2ff; color: #00d2ff; font-weight: bold; font-size: 11px;")
-        self.btn_save_all_txt.setToolTip("Export all reviewed page dialogues into Manga Cleaner script.")
+        self.btn_save_all_txt.setToolTip(tr("main.export_all_reviewed_page_dialogues_into"))
         self.btn_save_all_txt.clicked.connect(self.on_batch_write_all_to_txt)
 
         lp_lay.addLayout(header_lay)
@@ -355,7 +393,10 @@ class MainWindow(QMainWindow):
         has_text = self.page_has_existing_text(path)
         state_key = "updating" if has_text else "processing"
         self.page_states[path] = PageState.UPDATING if has_text else PageState.PROCESSING
-        message = "Retranslating existing page text" if has_text else "Page is being processed by the API"
+        message = tr(
+            "widgets.status_retranslating_page" if has_text
+            else "widgets.status_processing_page"
+        )
         self.file_list.update_item_state(path, state_key, message)
 
     def set_page_status(self, path: str, state_name: str):
@@ -378,9 +419,8 @@ class MainWindow(QMainWindow):
         if self.is_batching or (self.worker_thread and self.worker_thread.isRunning()):
             QMessageBox.warning(
                 self, 
-                "Studio Busy", 
-                "Cannot reset workspace while translation or batch processing is active.\n"
-                "Please cancel or wait for the process to complete before resetting."
+                tr("common.studio_busy"),
+                tr("main.cannot_reset_workspace_while_translation")
             )
             return
         ProjectResetController.reset(self)
@@ -393,11 +433,11 @@ class MainWindow(QMainWindow):
         else:
             if not self.is_paused:
                 self.is_paused = True
-                self.btn_batch.setText("▶ RESUME BATCH")
+                self.btn_batch.setText(tr("main.resume_batch"))
                 logger.info("[BATCH] Processing paused by user.")
             else:
                 self.is_paused = False
-                self.btn_batch.setText("⏸ PAUSE BATCH")
+                self.btn_batch.setText(tr("main.pause_batch"))
                 logger.info("[BATCH] Processing resumed by user.")
                 self.step_batch_translate()
 
@@ -416,7 +456,7 @@ class MainWindow(QMainWindow):
         
         self.btn_cancel_batch.setEnabled(False)
         self.btn_batch.setEnabled(False)
-        self.btn_batch.setText("⏳ Stopping...")
+        self.btn_batch.setText(tr("main.stopping"))
 
         # If no background inference is in flight, finalize immediately
         if not self.worker_thread or not self.worker_thread.isRunning():
@@ -434,8 +474,8 @@ class MainWindow(QMainWindow):
         if not api_config["has_credentials"]:
             QMessageBox.warning(
                 self,
-                "API credentials required",
-                f"Open API Settings and configure {api_config['provider_name']} before starting a batch.",
+                tr("common.api_credentials_required"),
+                tr("main.open_api_settings_and_configure_provider", provider_name=api_config['provider_name']),
             )
             return
 
@@ -460,8 +500,8 @@ class MainWindow(QMainWindow):
             ]
             if not paths:
                 QMessageBox.information(
-                    self, "All Pages Completed", 
-                    "All pages have already been processed.\nCheck specific pages in the list if you wish to re-translate them."
+                    self, tr("main.all_pages_completed"),
+                    tr("main.all_pages_have_already_been_processed")
                 )
                 return
 
@@ -491,7 +531,7 @@ class MainWindow(QMainWindow):
 
         for path in self.batch_queue:
             self.page_states[path] = PageState.WAITING
-            self.file_list.update_item_state(path, "waiting", "Queued for batch translation")
+            self.file_list.update_item_state(path, "waiting", tr("widgets.status_queued_for_batch"))
 
         # Lock entire UI for configuration safety
         self.set_batch_ui_locked(True)
@@ -500,7 +540,7 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(True)
 
-        self.btn_batch.setText("⏸ PAUSE BATCH")
+        self.btn_batch.setText(tr("main.pause_batch"))
         self.btn_batch.setEnabled(True)
         self.btn_cancel_batch.setEnabled(True)
 
@@ -595,14 +635,19 @@ class MainWindow(QMainWindow):
                 request_language_pair or self.translator_page.current_language_pair()
             )
             self.page_states[path] = PageState.READY
-            self.file_list.update_item_state(path, "ready", f"Translated ({len(result.bubbles)} dialogues)")
+            self.file_list.update_item_state(
+                path, "ready",
+                tr("widgets.status_translated_dialogues", count=len(result.bubbles)),
+            )
             self.translator_page.page_bubbles_data[path] = result.bubbles
             self.translator_page.path_dialogues_map[path] = [b.get("direct") for b in result.bubbles if b.get("direct")]
 
         elif status == ProviderStatus.EMPTY:
             self.translator_page.page_language_pairs.pop(path, None)
             self.page_states[path] = PageState.EMPTY
-            self.file_list.update_item_state(path, "empty", result.message or "Silent panel (No text detected)")
+            self.file_list.update_item_state(
+                path, "empty", result.message or tr("widgets.status_silent_panel")
+            )
             self.translator_page.page_bubbles_data[path] = []
             self.translator_page.path_dialogues_map.pop(path, None)
 
@@ -618,7 +663,9 @@ class MainWindow(QMainWindow):
 
         else:  # ERROR
             self.page_states[path] = PageState.ERROR
-            self.file_list.update_item_state(path, "error", result.message or "Translation failed")
+            self.file_list.update_item_state(
+                path, "error", result.message or tr("widgets.status_translation_failed")
+            )
             self.failed_batch_tasks.append((fname, result.message, path))
 
         if path == self._active_batch_path:
@@ -629,11 +676,59 @@ class MainWindow(QMainWindow):
             self._update_current_page_audit_lock()
 
         self.refresh_usage_summary()
-
         if self.stop_requested:
             self.finalize_batch_translate()
         else:
             self._schedule_next()
+
+    def _update_ui_language_button(self):
+        """Show the saved locale choice without loading additional catalogs."""
+        selected = i18n.get_saved_language() or "auto"
+        if selected.casefold() == "auto":
+            display_name = tr("settings.language.auto")
+        else:
+            normalized = selected.replace("_", "-").casefold()
+            display_name = next(
+                (
+                    name for code, name in i18n.available_languages()
+                    if code.replace("_", "-").casefold() == normalized
+                ),
+                selected,
+            )
+        # Keep the selector compact with the native name, while retaining the
+        # bilingual catalog label in its tooltip and in the menu itself.
+        native_name = display_name
+        if " (" in display_name and display_name.endswith(")"):
+            native_name = display_name.rsplit(" (", 1)[1][:-1]
+        button_text = f"🌐 {native_name}"
+        metrics = self.btn_ui_language.fontMetrics()
+        requested_width = metrics.horizontalAdvance(button_text) + 42
+        button_width = max(112, min(300, requested_width))
+        available_text_width = max(50, button_width - 42)
+        visible_name = metrics.elidedText(native_name, Qt.ElideRight, available_text_width)
+        self.btn_ui_language.setText(f"🌐 {visible_name}")
+        self.btn_ui_language.setFixedWidth(button_width)
+        self.btn_ui_language.setToolTip(display_name)
+
+    def _save_ui_language(self, code):
+        """Persist the interface locale; the active UI reloads on next launch."""
+        selected = i18n.get_saved_language() or "auto"
+        if selected.casefold() == code.casefold():
+            return
+        if not i18n.save_language(code):
+            QMessageBox.warning(
+                self,
+                i18n.tr("settings.language.save_error.title"),
+                i18n.tr("settings.language.save_error.body"),
+            )
+            return
+        self._update_ui_language_button()
+        if code != i18n.current_language():
+            QMessageBox.information(
+                self,
+                i18n.tr("settings.language.restart_required.title"),
+                i18n.tr("settings.language.restart_required.body"),
+            )
 
     def on_batch_page_error(self, path: str, error_msg: str):
         """Handles unhandled worker thread errors during batch translation."""
@@ -647,7 +742,7 @@ class MainWindow(QMainWindow):
         if "DAILY_QUOTA" in error_msg:
             self.batch_queue.insert(0, path)
             self.page_states[path] = PageState.UNMODIFIED
-            self.file_list.update_item_state(path, "unmodified", "Daily quota exhausted")
+            self.file_list.update_item_state(path, "unmodified", tr("widgets.status_daily_quota_exhausted"))
             self.stop_requested = True
             self.stop_reason = "quota"
             self._active_batch_path = None
@@ -683,7 +778,7 @@ class MainWindow(QMainWindow):
         )
         self.progress_bar.setVisible(False)
         self.btn_batch.setEnabled(True)
-        self.btn_batch.setText("▶ RUN BATCH TRANSLATE")
+        self.btn_batch.setText(tr("common.run_batch_translate"))
         self.btn_cancel_batch.setEnabled(False)
 
         # Unlock UI controls completely
@@ -697,31 +792,37 @@ class MainWindow(QMainWindow):
             previous_state = self._batch_previous_states.get(path, PageState.UNMODIFIED)
             self.page_states[path] = previous_state
             state_key = previous_state.name.lower()
-            self.file_list.update_item_state(path, state_key, f"Batch stopped before this page was sent · {state_key.title()}")
+            self.file_list.update_item_state(
+                path, state_key,
+                tr("widgets.status_batch_stopped_before_send", state=tr(f"widgets.state_{state_key}")),
+            )
         self._batch_previous_states.clear()
         successful_count = self.completed_batch_tasks - len(self.failed_batch_tasks)
-        duration_suffix = (
-            f" · {self._format_elapsed(self._last_job_duration)}"
-            if self._last_job_duration is not None else ""
-        )
         if not self.stop_requested and not self.failed_batch_tasks and not pending:
             self.translator_page.show_status_message(
-                f"✔ Batch complete · {successful_count}/{self.total_batch_tasks} pages translated{duration_suffix}",
+                tr(
+                    "main.batch_status_complete",
+                    successful_count=successful_count,
+                    total_count=self.total_batch_tasks,
+                ),
                 "#00e676",
             )
         else:
             self.translator_page.show_status_message(
-                f"⚠ Batch finished · {successful_count} successful · "
-                f"{len(self.failed_batch_tasks)} failed · {len(pending)} pending{duration_suffix}",
+                tr(
+                    "main.batch_status_finished",
+                    successful_count=successful_count,
+                    failed_count=len(self.failed_batch_tasks),
+                    pending_count=len(pending),
+                ),
                 "#ffd600",
             )
 
         if not self.failed_batch_tasks and not pending and not self.stop_requested:
             QMessageBox.information(
                 self, 
-                "Batch Complete", 
-                f"All pages ({successful_count}/{self.total_batch_tasks}) were processed successfully.\n\n"
-                "Review them page by page and click 'WRITE ALL TO .TXT'."
+                tr("main.batch_complete"),
+                tr("main.all_pages_successful_count_total_batch", successful_count=successful_count, total_batch_tasks=self.total_batch_tasks)
             )
             return
 
@@ -735,25 +836,22 @@ class MainWindow(QMainWindow):
             it = self.file_list.item(i)
             it.setCheckState(Qt.Checked if it.data(Qt.UserRole) in retry_paths else Qt.Unchecked)
 
-        reasons = {
-            "quota": "Daily request limit (RPD) exhausted. Pending pages remain checked for easy resumption once quota resets.",
-            "user": "Batch processing was stopped by user. Remaining pages remain selected for quick retry.",
+        reason_keys = {
+            "quota": "main.batch_reason_quota_exhausted",
+            "user": "main.batch_reason_stopped_by_user",
         }
-        head = reasons.get(self.stop_reason, "Some pages encountered issues during batch processing.")
+        head = tr(reason_keys.get(self.stop_reason, "main.batch_reason_some_issues"))
 
         failed_lines = [f"• {f} ➔ {r}" for f, r, _ in self.failed_batch_tasks]
         detail = "\n".join(failed_lines[:15])
         if len(failed_lines) > 15:
-            detail += f"\n... and {len(failed_lines) - 15} more page(s)."
+            detail += "\n" + tr("main.batch_more_failed_pages", count=len(failed_lines) - 15)
 
         box = QMessageBox(self)
-        box.setWindowTitle("Batch Finished")
+        box.setWindowTitle(tr("main.batch_finished"))
         box.setIcon(QMessageBox.Warning if (self.failed_batch_tasks or self.stop_requested) else QMessageBox.Information)
         box.setText(
-            f"{head}\n\n"
-            f"✔ Processed: {successful_count}\n"
-            f"✖ Issues: {len(self.failed_batch_tasks)}\n"
-            f"⏸ Pending: {len(pending)}"
+            tr("main.head_processed_successful_count_issues_c", head=head, successful_count=successful_count, count=len(self.failed_batch_tasks), count2=len(pending))
         )
         if detail:
             box.setDetailedText(detail)
@@ -766,11 +864,11 @@ class MainWindow(QMainWindow):
 
         paths = self.translator_page._get_all_project_paths()
         if not paths:
-            QMessageBox.warning(self, "Notice", "No images loaded in the project.")
+            QMessageBox.warning(self, tr("common.notice"), tr("main.no_images_loaded_in_the_project"))
             return
 
         if not self.translator_page.path_dialogues_map:
-            QMessageBox.warning(self, "Notice", "There are no translated or reviewed dialogues to save.")
+            QMessageBox.warning(self, tr("common.notice"), tr("main.there_are_no_translated_or_reviewed"))
             return
 
         # Prompt template generation if no script file is currently bound
@@ -785,26 +883,27 @@ class MainWindow(QMainWindow):
                 paths, 
                 self.translator_page.path_dialogues_map
             )
-            self.translator_page.lbl_script_status.setText(f"Saved: {os.path.basename(self.translator_page.loaded_script_path)}")
+            self.translator_page.lbl_script_status.setText(tr("main.saved_basename", basename=os.path.basename(self.translator_page.loaded_script_path)))
             self.translator_page.refresh_scripts_for_selected_series()
             
             for p in self.translator_page.path_dialogues_map.keys():
                 self.page_states[p] = PageState.SCRIPT_SYNCED
-                self.file_list.update_item_state(p, "script_synced", "Written into translation script")
+                self.file_list.update_item_state(
+                    p, "script_synced", tr("widgets.status_written_to_script")
+                )
 
             QMessageBox.information(
                 self, 
-                "Script Synchronized", 
-                f"All dialogues were successfully written to:\n\n{self.translator_page.loaded_script_path}\n\n"
-                "Ready to open directly in Manga Cleaner."
+                tr("main.script_synchronized"),
+                tr("main.all_dialogues_were_successfully_written", loaded_script_path=self.translator_page.loaded_script_path)
             )
         except Exception as e:
-            QMessageBox.critical(self, "Save Error", f"Could not write script file:\n{e}")
+            QMessageBox.critical(self, tr("main.save_error"), tr("main.could_not_write_script_file_e", e=e))
 
     # --- PAGE NAVIGATION & ASSET SYNCHRONIZATION ---
     def on_open_folder(self):
         """Opens directory picker and initializes project assets."""
-        p = QFileDialog.getExistingDirectory(self, "Select Folder")
+        p = QFileDialog.getExistingDirectory(self, tr("main.select_folder"))
         if p:
             self.image_sessions.clear()
             self.page_states.clear()
@@ -831,7 +930,9 @@ class MainWindow(QMainWindow):
         if self.current_img_path and not self.is_page_blocked_by_batch(self.current_img_path):
             if self.page_states.get(self.current_img_path) != PageState.MODIFIED:
                 self.page_states[self.current_img_path] = PageState.MODIFIED
-                self.file_list.update_item_state(self.current_img_path, "modified", "Locally modified")
+                self.file_list.update_item_state(
+                    self.current_img_path, "modified", tr("widgets.status_locally_modified")
+                )
 
     def on_file_clicked(self, it):
         """Loads selected image into canvas viewer and renders its dialogue editor."""
@@ -862,9 +963,9 @@ class MainWindow(QMainWindow):
                     self.canvas.set_image(img)
                     self.image_sessions[path_real] = img
                 else:
-                    QMessageBox.warning(self, "Image Decode Error", f"Failed to decode image file:\n{os.path.basename(path_real)}")
+                    QMessageBox.warning(self, tr("main.image_decode_error"), tr("main.failed_to_decode_image_file_basename", basename=os.path.basename(path_real)))
             except Exception as e:
-                QMessageBox.warning(self, "Image Load Error", f"Could not load image file:\n{e}")
+                QMessageBox.warning(self, tr("main.image_load_error"), tr("main.could_not_load_image_file_e", e=e))
 
         self.translator_page.load_page_state(path_real)
 
@@ -915,22 +1016,24 @@ class MainWindow(QMainWindow):
         config = self.translator_page.get_active_api_config()
         provider = config["provider_id"]
         model = config["model"]
-        thinking = str(config.get("thinking_level", "")).strip().title()
+        thinking = str(config.get("thinking_level", "")).strip().lower()
         thinking_available = (
             provider == "gemini"
             and bool(thinking)
             and bool(AIClientManager.get_provider("gemini").supported_thinking_levels(model))
         )
         if not thinking_available:
-            thinking = "Not available"
+            thinking_label = tr("main.thinking_not_available")
+        else:
+            thinking_label = tr(f"main.thinking_{thinking}")
         provider_label = html.escape(str(config.get("provider_name") or provider.title()))
-        model_label = html.escape(str(model or "No model selected"))
-        thinking_label = html.escape(thinking)
+        model_label = html.escape(str(model or tr("main.no_model_selected")))
+        thinking_label = html.escape(thinking_label)
         thinking_color = "#00d4ff" if thinking_available else "#ff5252"
         self._header_info = (
-            f"<span style='color:#c1c1ce'>Provider:</span> <span style='color:#00d4ff'>{provider_label}</span><br>"
-            f"<span style='color:#c1c1ce'>Model:</span> <span style='color:#00d4ff'>{model_label}</span><br>"
-            f"<span style='color:#c1c1ce'>Thinking:</span> "
+            f"<span style='color:#c1c1ce'>{tr('common.provider')}</span> <span style='color:#00d4ff'>{provider_label}</span><br>"
+            f"<span style='color:#c1c1ce'>{tr('api_settings.model')}</span> <span style='color:#00d4ff'>{model_label}</span><br>"
+            f"<span style='color:#c1c1ce'>{tr('main.thinking_label')}</span> "
             f"<span style='color:{thinking_color}'>{thinking_label}</span>"
         )
         if not config["has_credentials"] and self._job_started_at is None:
@@ -939,8 +1042,7 @@ class MainWindow(QMainWindow):
             self._request_status = "Ready"
         self._update_elapsed_display()
         self.lbl_usage_summary.setToolTip(
-            f"Request pacing: {config['request_pacing'].upper()}. "
-            "Provider, model, and thinking level come from the active API settings."
+            tr("main.request_pacing_upper_provider_model_and", upper=config['request_pacing'].upper())
         )
         self.lbl_rpd_status.setVisible(provider == "gemini" and bool(model))
         if provider == "gemini" and model:
@@ -959,24 +1061,53 @@ class MainWindow(QMainWindow):
             return
         if self._job_started_at is not None:
             elapsed = time.monotonic() - self._job_started_at
-            activity = self._request_status
-            elapsed_text = self._format_elapsed(elapsed)
-            if hasattr(self, "translator_page"):
-                self.translator_page.update_inference_elapsed(elapsed_text)
+            duration = self._format_elapsed(elapsed)
+            time_color = "#00d4ff"
+            time_label = tr("main.elapsed_time", duration=duration)
         elif self._last_job_duration is not None:
-            activity = f"{self._request_status} · {self._format_elapsed(self._last_job_duration)}"
+            duration = self._format_elapsed(self._last_job_duration)
+            time_color = "#00e676" if self._request_status in ("Complete", "Batch complete") else "#ffd600"
+            time_label = tr("main.total_work_time", duration=duration)
         else:
-            activity = self._request_status
+            time_label = ""
+        activity = self._localized_request_status()
         activity_color = "#ff5252"
-        activity_lower = activity.lower()
-        if any(word in activity_lower for word in ("ready", "complete", "success")):
+        if self._request_status in ("Ready", "Batch complete"):
             activity_color = "#00e676"
-        elif any(word in activity_lower for word in ("working", "waiting", "stopping")):
+        elif self._request_status in (
+            "Waiting to send", "Waiting for next page",
+            "Working — waiting for API response", "Stopping",
+        ):
             activity_color = "#00d4ff"
         self.lbl_usage_summary.setText(
-            f"{self._header_info}<br>"
-            f"<span style='color:{activity_color}'>Status: {html.escape(activity)}</span>"
+            tr(
+                "main.header_info_status_escape",
+                header_info=self._header_info,
+                activity_color=activity_color,
+                escape=html.escape(activity),
+                time_line=(
+                    f"<br><span style='color:{time_color}'>{html.escape(time_label)}</span>"
+                    if time_label else ""
+                ),
+            )
         )
+
+    def _localized_request_status(self):
+        """Translate fixed request states while keeping internal state values stable."""
+        keys = {
+            "Ready": "main.status_ready",
+            "Complete": "main.status_complete",
+            "Failed": "main.status_failed",
+            "Credentials needed": "main.status_credentials_needed",
+            "Waiting to send": "main.status_waiting_to_send",
+            "Waiting for next page": "main.status_waiting_for_next_page",
+            "Working — waiting for API response": "main.status_working_waiting_api",
+            "Stopping": "main.status_stopping",
+            "Batch complete": "main.status_batch_complete",
+            "Batch finished": "main.status_batch_finished",
+        }
+        key = keys.get(self._request_status)
+        return tr(key) if key else self._request_status
 
     def _start_timed_job(self, status: str = "Waiting to send"):
         self.elapsed_timer.stop()

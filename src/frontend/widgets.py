@@ -14,6 +14,7 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtCore import Qt, QSize
 from src.utils.paths import Paths
 from src.utils.logger import logger
+from src.utils.i18n import tr
 
 # Mapping between application state keys and actual filenames inside assets/
 ASSET_ICON_MAP = {
@@ -123,7 +124,7 @@ class FileListWidget(QListWidget):
         fname = os.path.basename(full_path)
         item = QListWidgetItem(IconProvider.get("unmodified"), fname)
         item.setData(Qt.UserRole, full_path)
-        item.setToolTip(f"{fname}\nStatus: Unmodified")
+        item.setToolTip(tr("widgets.fname_status_unmodified", fname=fname))
         item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
         item.setCheckState(Qt.Unchecked)
         self.addItem(item)
@@ -145,6 +146,10 @@ class FileListWidget(QListWidget):
             it = self.item(i)
             if it.data(Qt.UserRole) == full_path:
                 it.setIcon(icon)
-                status_desc = tooltip_msg if tooltip_msg else clean_state.capitalize()
-                it.setToolTip(f"{fname}\nStatus: {status_desc}")
+                status_desc = (
+                    tooltip_msg
+                    if tooltip_msg
+                    else tr(f"widgets.state_{clean_state}")
+                )
+                it.setToolTip(tr("widgets.fname_status_status_desc", fname=fname, status_desc=status_desc))
                 break

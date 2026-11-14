@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
 from src.utils.logger import logger
+from src.utils.i18n import tr
 
 
 class ProjectResetController:
@@ -57,9 +58,8 @@ class ProjectResetController:
         ):
             QMessageBox.warning(
                 mw,
-                "Studio Busy",
-                "Cannot reset workspace while translation or batch processing is active.\n\n"
-                "Please wait for the process to complete or abort the batch before resetting.",
+                tr("common.studio_busy"),
+                tr("reset.cannot_reset_workspace_while_translation"),
             )
             return False
 
@@ -85,10 +85,8 @@ class ProjectResetController:
 
         answer = QMessageBox.question(
             mw,
-            "Reset Project",
-            "Do you want to purge the current project from memory?\n\n"
-            "Loaded pages, active translation sessions, and queues will be cleared. "
-            "Files on disk and your configured API credentials will remain intact.",
+            tr("reset.reset_project"),
+            tr("reset.do_you_want_to_purge_the"),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -166,7 +164,7 @@ class ProjectResetController:
                 translator.page_token_usage.clear()
 
             if hasattr(translator, "lbl_script_status"):
-                translator.lbl_script_status.setText("Script: None")
+                translator.lbl_script_status.setText(tr("common.script_none"))
 
             if hasattr(translator, "populate_bubble_editor"):
                 translator.populate_bubble_editor([])
@@ -178,8 +176,6 @@ class ProjectResetController:
             if hasattr(translator, "lbl_api_status"):
                 translator.lbl_api_status.clear()
                 translator.lbl_api_status.setVisible(False)
-            if hasattr(translator, "_inference_progress"):
-                translator._inference_progress = ""
 
             if hasattr(translator, "set_locked"):
                 translator.set_locked(False)
@@ -195,7 +191,7 @@ class ProjectResetController:
             mw.progress_bar.setVisible(False)
 
         if hasattr(mw, "btn_batch"):
-            mw.btn_batch.setText("▶ RUN BATCH TRANSLATE")
+            mw.btn_batch.setText(tr("common.run_batch_translate"))
             mw.btn_batch.setEnabled(True)
 
         if hasattr(mw, "btn_cancel_batch"):
@@ -217,8 +213,8 @@ class ProjectResetController:
         logger.info("[STUDIO] Project reset completed; memory reclaimed successfully.")
         QMessageBox.information(
             mw,
-            "Project Reset",
-            "The studio workspace has been cleared and is ready to load a new project folder.",
+            tr("reset.project_reset"),
+            tr("reset.the_studio_workspace_has_been_cleared"),
         )
         return True
 

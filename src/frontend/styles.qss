@@ -41,7 +41,7 @@ QPushButton {
     background-color: #1c1c22;
     border: 1px solid #2a2a32;
     border-radius: 4px;
-    padding: 8px;
+    padding: 4px 10px;
     color: #b0b0b5;
     font-weight: bold;
     font-size: 11px;
@@ -72,6 +72,42 @@ QPushButton:checked {
 #ActionBtn {
     border: 1px solid #00d4ff;
     color: #00d4ff;
+}
+
+/* Consistent text insets for editable fields and selectors. Keep extra room
+   on the right where Qt places the popup or spin controls. */
+QLineEdit, QComboBox, QAbstractSpinBox {
+    padding: 4px 8px;
+}
+
+QComboBox {
+    padding-right: 26px;
+}
+
+QComboBox::drop-down {
+    width: 22px;
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+}
+
+QSpinBox, QDoubleSpinBox {
+    padding-right: 24px;
+}
+
+QTextEdit, QPlainTextEdit {
+    padding: 6px 8px;
+}
+
+QCheckBox {
+    spacing: 6px;
+}
+
+QTabBar::tab {
+    padding: 7px 10px;
+}
+
+QHeaderView::section {
+    padding: 5px 8px;
 }
 
 /* Sliders */

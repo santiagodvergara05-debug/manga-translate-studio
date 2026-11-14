@@ -14,6 +14,8 @@
 
 Instead of relying on standalone, error-prone OCR engines, MTS performs direct multimodal image analysis. It identifies visual speech bubbles, narration boxes, floating outside text, and comic sound effects (SFX), translating and structuring them into standard script files (`.txt`) ready for typesetting or direct import into [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner).
 
+The interface locale is separate from the source and target languages used to translate manga. UI catalogs are JSON files under `locales/`; the runtime reads the small index and loads only the selected catalog. See [TRANSLATION.md](TRANSLATION.md) for catalog verification and contribution. The catalog migration is in progress; English remains the fallback.
+
 ---
 
 ## 🖥️ Studio Workflow & Interface
@@ -51,6 +53,9 @@ Manga Translate Studio/
 │   └── Ui.png                         # Repository UI screenshot
 ├── .gitignore                          # Excludes local credentials, history, and generated files
 ├── assets/                            # Application icons and branding
+├── locales/                           # UI language catalogs
+│   ├── en.json                        # English source strings
+│   └── index.json                     # Language names and source fingerprint
 ├── Pricing_Models_Providers/          # Community JSON price references for import
 │   ├── README.md                      # Price schema and contribution guidance
 │   ├── google_models.json             # Google Gemini and Gemma reference rates
@@ -60,6 +65,7 @@ Manga Translate Studio/
 │   ├── core_rules.txt                 # Technical prompt rules
 │   ├── pricing_tables.json            # Imported/editable prices and Gemini RPD settings
 │   ├── prompt_options.json            # Extraction and prompt feature toggles
+│   ├── ui_settings.json               # Saved interface locale (created when changed)
 │   ├── usage_history.json             # Local request and token history
 │   └── user_rules.txt                 # User glossary, lore, and style rules
 ├── logs/                              # Runtime diagnostics (git-ignored)
@@ -93,13 +99,18 @@ Manga Translate Studio/
 │   │   └── widgets.py                 # SVG icon provider and project asset list
 │   └── utils/
 │       ├── config.py                  # Global constants, version and color palette
+│       ├── i18n.py                    # Verified JSON locale loading and fallback
 │       ├── logger.py                  # Runtime logging
 │       └── paths.py                   # Source/frozen path resolver
+├── tools/
+│   ├── check_locales.py               # Catalog structure and release verification
+│   ├── extract_strings.py             # UI string extraction and review report
+│   └── migrate_to_tr.py               # Dry-run-first UI localization migration
 ├── build_exe.py                       # PyInstaller packaging script
 ├── CONTRIBUTING.md                    # Contribution and pull request guidelines
+├── TRANSLATION.md                     # UI localization and catalog verification guide
 ├── CHANGELOG_1.6.0.md                 # Detailed changes in version 1.6.0
 ├── TECHNICAL_AUDIT_1.6.0.md           # Maintenance audit and follow-up notes
-├── TECHNICAL_AUDIT_1.6.0.md           # Maintainability, dead-code, and JSON-loading audit
 ├── generate_icons.py                  # Application icon generation utility
 ├── LICENSE                            # Apache License 2.0
 ├── main.py                            # Application entry point

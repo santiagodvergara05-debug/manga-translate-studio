@@ -21,6 +21,7 @@ from src.backend.ai_client import AIClientManager, FetchModelsWorker
 from src.backend.credential_manager import CredentialManager
 from src.backend.providers.gemini_provider import GeminiProvider
 from src.backend.usage_manager import UsageManager
+from src.utils.i18n import tr
 
 
 class APISettingsDialog(QDialog):
@@ -50,7 +51,7 @@ class APISettingsDialog(QDialog):
         self._loaded_lan_mode = False
         self.fetch_worker = None
 
-        self.setWindowTitle("API and Model Settings")
+        self.setWindowTitle(tr("api_settings.api_and_model_settings"))
         self.setMinimumWidth(620)
 
         layout = QVBoxLayout(self)
@@ -64,18 +65,18 @@ class APISettingsDialog(QDialog):
             if not getattr(provider, "is_available", True):
                 display_name = f"{display_name} (Unavailable)"
             self.provider_combo.addItem(display_name, provider_id)
-        form.addRow("Provider:", self.provider_combo)
+        form.addRow(tr("common.provider"), self.provider_combo)
 
-        self.lan_mode = QCheckBox("Use local Ollama (localhost)")
-        form.addRow("Connection:", self.lan_mode)
+        self.lan_mode = QCheckBox(tr("api_settings.use_local_ollama_localhost"))
+        form.addRow(tr("api_settings.connection"), self.lan_mode)
 
         self.primary_input = QLineEdit()
-        self.primary_label = QLabel("API key:")
+        self.primary_label = QLabel(tr("api_settings.api_key"))
         form.addRow(self.primary_label, self.primary_input)
 
         self.secondary_input = QLineEdit()
         self.secondary_input.setEchoMode(QLineEdit.Password)
-        self.secondary_label = QLabel("Cloud API key:")
+        self.secondary_label = QLabel(tr("api_settings.cloud_api_key"))
         form.addRow(self.secondary_label, self.secondary_input)
 
         self.model_combo = QComboBox()
@@ -84,14 +85,13 @@ class APISettingsDialog(QDialog):
         # Windows' native popup ignores maxVisibleItems for a non-editable combo.
         # Force Qt's popup so long model lists stay bounded and scrollable.
         self.model_combo.setStyleSheet("QComboBox { combobox-popup: 0; }")
-        form.addRow("Model:", self.model_combo)
+        form.addRow(tr("api_settings.model"), self.model_combo)
 
         self.thinking_combo = QComboBox()
         self.thinking_combo.setToolTip(
-            "Gemini 3 only. Higher levels can increase latency and token usage. "
-            "In development, Google may return a thought summary in the console."
+            tr("api_settings.gemini_3_only_higher_levels_can")
         )
-        form.addRow("Thinking level:", self.thinking_combo)
+        form.addRow(tr("api_settings.thinking_level"), self.thinking_combo)
         self.model_combo.currentTextChanged.connect(self._update_thinking_levels)
 
         self.rpd_container = QWidget()
@@ -106,13 +106,13 @@ class APISettingsDialog(QDialog):
             field.setAlignment(Qt.AlignCenter)
             field.textChanged.connect(self._refresh_rpd_status)
             field.editingFinished.connect(self._save_gemini_rpd_fields)
-        rpd_layout.addWidget(QLabel("Limit / day"))
+        rpd_layout.addWidget(QLabel(tr("api_settings.limit_day")))
         rpd_layout.addWidget(self.rpd_limit_input)
-        rpd_layout.addWidget(QLabel("Used today"))
+        rpd_layout.addWidget(QLabel(tr("api_settings.used_today")))
         rpd_layout.addWidget(self.rpd_used_input)
         self.rpd_status_label = QLabel()
         self.rpd_status_label.setWordWrap(False)
-        self.rpd_row_label = QLabel("Gemini RPD:")
+        self.rpd_row_label = QLabel(tr("api_settings.gemini_rpd"))
         form.addRow(self.rpd_row_label, self.rpd_container)
         form.addRow("", self.rpd_status_label)
         self._rpd_view_key = None
@@ -121,24 +121,24 @@ class APISettingsDialog(QDialog):
         profile_row = QHBoxLayout()
         self.profile_combo = QComboBox()
         self.profile_name_input = QLineEdit()
-        self.profile_name_input.setPlaceholderText("Profile name")
-        self.add_profile_button = QPushButton("Add")
-        self.remove_profile_button = QPushButton("Remove")
+        self.profile_name_input.setPlaceholderText(tr("api_settings.profile_name"))
+        self.add_profile_button = QPushButton(tr("api_settings.add"))
+        self.remove_profile_button = QPushButton(tr("api_settings.remove"))
         profile_row.addWidget(self.profile_combo, 2)
         profile_row.addWidget(self.profile_name_input, 2)
         profile_row.addWidget(self.add_profile_button)
         profile_row.addWidget(self.remove_profile_button)
-        form.addRow("Connection profile:", profile_row)
-        connection_note = QLabel("Choose a saved connection to load its provider, credentials, and model.")
+        form.addRow(tr("api_settings.connection_profile"), profile_row)
+        connection_note = QLabel(tr("api_settings.choose_a_saved_connection_to_load"))
         connection_note.setWordWrap(True)
         connection_note.setStyleSheet("color: #888899; font-size: 10px;")
         form.addRow("", connection_note)
         layout.addLayout(form)
 
         connect_row = QHBoxLayout()
-        self.status_label = QLabel("Credentials are stored in the local application configuration.")
+        self.status_label = QLabel(tr("api_settings.credentials_are_stored_in_the_local"))
         self.status_label.setWordWrap(True)
-        self.connect_button = QPushButton("Test connection and load models")
+        self.connect_button = QPushButton(tr("api_settings.test_connection_and_load_models"))
         self.connect_button.clicked.connect(self.test_connection)
         connect_row.addWidget(self.status_label, 1)
         connect_row.addWidget(self.connect_button)
@@ -168,13 +168,17 @@ class APISettingsDialog(QDialog):
     def _update_thinking_levels(self, *_):
         if self._provider_id() != "gemini":
             return
-        previous = self.thinking_combo.currentText().lower()
+        previous = str(self.thinking_combo.currentData() or "").lower()
         levels = GeminiProvider.supported_thinking_levels(self.model_combo.currentText())
         self.thinking_combo.blockSignals(True)
         self.thinking_combo.clear()
-        self.thinking_combo.addItems(levels)
-        if previous in levels:
-            self.thinking_combo.setCurrentText(previous)
+        for level in levels:
+            self.thinking_combo.addItem(
+                tr(f"api_settings.thinking_{level}"), level
+            )
+        previous_index = self.thinking_combo.findData(previous)
+        if previous_index >= 0:
+            self.thinking_combo.setCurrentIndex(previous_index)
         elif levels:
             self.thinking_combo.setCurrentIndex(0)
         self.thinking_combo.blockSignals(False)
@@ -268,7 +272,7 @@ class APISettingsDialog(QDialog):
             return
         name = self._profiles[profile_id].get("name", "Unnamed connection")
         answer = QMessageBox.question(
-            self, "Remove connection profile", f"Remove the saved connection '{name}'?",
+            self, tr("api_settings.remove_connection_profile"), tr("api_settings.remove_the_saved_connection_name", name=name),
             QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel,
         )
         if answer != QMessageBox.Yes:
@@ -294,6 +298,10 @@ class APISettingsDialog(QDialog):
             is_lan = supports_lan and bool(draft.get("lan_mode", creds.get("lan_mode", True)))
 
             self.lan_mode.setVisible(supports_lan)
+            # Re-apply the enabled state whenever provider/profile fields refresh.
+            # Otherwise a control left disabled by an earlier async connection test
+            # can remain unusable until the dialog is tested again.
+            self.lan_mode.setEnabled(provider_available and supports_lan)
             self.lan_mode.setChecked(is_lan)
             connection_label = self.form.labelForField(self.lan_mode)
             if connection_label is not None:
@@ -301,7 +309,7 @@ class APISettingsDialog(QDialog):
             self.primary_input.setPlaceholderText(
                 getattr(provider, "primary_placeholder", "Enter API key...")
             )
-            self.primary_label.setText("API endpoint:" if requires_endpoint else "API key:")
+            self.primary_label.setText(tr("api_settings.api_endpoint") if requires_endpoint else tr("api_settings.api_key"))
             self.primary_input.setEchoMode(
                 QLineEdit.Password if getattr(provider, "is_primary_secret", True) else QLineEdit.Normal
             )
@@ -323,7 +331,7 @@ class APISettingsDialog(QDialog):
             self.secondary_input.setPlaceholderText(
                 getattr(provider, "secondary_placeholder", "Enter cloud API token...")
             )
-            self.secondary_label.setText("Cloud API key:")
+            self.secondary_label.setText(tr("api_settings.cloud_api_key"))
             self.secondary_input.setText(
                 str(draft.get("token", creds.get("token", ""))) if requires_endpoint else ""
             )
@@ -333,17 +341,19 @@ class APISettingsDialog(QDialog):
             self.model_combo.addItems([str(model) for model in models])
             self.model_combo.setCurrentText(str(draft.get("model", creds.get("model", ""))))
             self._update_thinking_levels()
-            self.thinking_combo.setCurrentText(
+            thinking_index = self.thinking_combo.findData(
                 str(draft.get("thinking_level", creds.get("thinking_level", "minimal"))).lower()
             )
+            if thinking_index >= 0:
+                self.thinking_combo.setCurrentIndex(thinking_index)
             self.thinking_combo.setVisible(provider_id == "gemini")
             self.thinking_combo.setEnabled(provider_id == "gemini" and bool(self.thinking_combo.count()))
             thinking_label = self.form.labelForField(self.thinking_combo)
             if thinking_label is not None:
                 thinking_label.setVisible(provider_id == "gemini")
                 thinking_label.setText(
-                    "Thinking level:" if self.thinking_combo.count()
-                    else "Thinking level (model default):"
+                    tr("api_settings.thinking_level") if self.thinking_combo.count()
+                    else tr("api_settings.thinking_level_model_default")
                 )
             self.rpd_container.setVisible(provider_id == "gemini")
             self.rpd_row_label.setVisible(provider_id == "gemini")
@@ -359,12 +369,12 @@ class APISettingsDialog(QDialog):
             self.connect_button.setEnabled(provider_available)
             self.button_box.button(QDialogButtonBox.Save).setEnabled(provider_available)
             if not provider_available:
-                self._show_error(
-                    f"{provider.display_name} is not available yet. "
-                    "See Help > Providers & Contribution for the repository and integration details."
-                )
+                self._show_error(tr(
+                    "api_settings.provider_unavailable",
+                    provider=provider.display_name,
+                ))
             else:
-                self.status_label.setText("Credentials are stored in the local application configuration.")
+                self.status_label.setText(tr("api_settings.credentials_are_stored_in_the_local"))
                 self.status_label.setStyleSheet("color: #888899;")
         finally:
             self._loading = False
@@ -399,15 +409,15 @@ class APISettingsDialog(QDialog):
             limit = int(self.rpd_limit_input.text().strip() or 0)
             used = int(self.rpd_used_input.text().strip() or 0)
         except ValueError:
-            self.rpd_status_label.setText("Enter whole numbers only.")
+            self.rpd_status_label.setText(tr("api_settings.enter_whole_numbers_only"))
             self.rpd_status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
             return
         if limit > 0 and used > limit:
-            text, color = f"RPD limit exceeded: {used} / {limit}", "#ff5252"
+            text, color = tr("api_settings.rpd_limit_exceeded", used=used, limit=limit), "#ff5252"
         elif limit == 0:
-            text, color = "RPD tracking off (limit is 0)", "#a0a0ad"
+            text, color = tr("api_settings.rpd_tracking_off"), "#a0a0ad"
         else:
-            text, color = f"RPD within limit: {used} / {limit}", "#00e676"
+            text, color = tr("api_settings.rpd_within_limit", used=used, limit=limit), "#00e676"
         self.rpd_status_label.setText(text)
         self.rpd_status_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
@@ -427,7 +437,7 @@ class APISettingsDialog(QDialog):
                 int(self.rpd_used_input.text().strip() or 0),
             )
         except (ValueError, OSError) as error:
-            self.rpd_status_label.setText(f"Could not save RPD values: {error}")
+            self.rpd_status_label.setText(tr("api_settings.could_not_save_rpd_values_error", error=error))
             self.rpd_status_label.setStyleSheet("color: #ff5252; font-weight: bold;")
             return
         self._refresh_rpd_status()
@@ -466,7 +476,7 @@ class APISettingsDialog(QDialog):
             "models_list": [self.model_combo.itemText(i) for i in range(self.model_combo.count())],
         }
         if provider_id == "gemini" and self.thinking_combo.count():
-            values["thinking_level"] = self.thinking_combo.currentText().lower()
+            values["thinking_level"] = str(self.thinking_combo.currentData() or "minimal").lower()
         if requires_endpoint:
             values.update({
                 "lan_mode": is_lan,
@@ -495,19 +505,16 @@ class APISettingsDialog(QDialog):
         provider_id, key_or_url, token = self._connection_values()
         provider = self._current_provider()
         if not getattr(provider, "is_available", True):
-            self._show_error(
-                f"{provider.display_name} is not available yet. "
-                "See Help > Providers & Contribution for more information."
-            )
+            self._show_error(tr("api_settings.provider_unavailable", provider=provider.display_name))
             return
         requires_endpoint = bool(getattr(provider, "requires_endpoint", False))
         is_lan = bool(getattr(provider, "has_lan_mode", False) and self.lan_mode.isChecked())
 
         if not key_or_url:
-            self._show_error("Enter the API key or endpoint first.")
+            self._show_error(tr("api_settings.enter_api_key_or_endpoint"))
             return
         if requires_endpoint and not is_lan and not token:
-            self._show_error("Enter the cloud API key first.")
+            self._show_error(tr("api_settings.enter_cloud_api_key"))
             return
 
         self.connect_button.setEnabled(False)
@@ -524,7 +531,7 @@ class APISettingsDialog(QDialog):
             self.model_combo,
         ):
             control.setEnabled(False)
-        self.status_label.setText("Checking connection…")
+        self.status_label.setText(tr("api_settings.checking_connection"))
         self.status_label.setStyleSheet("color: #d0d0d0;")
         self._pending_connection = (provider_id, key_or_url, is_lan)
         self.fetch_worker = FetchModelsWorker(provider_id, key_or_url, token)
@@ -532,6 +539,13 @@ class APISettingsDialog(QDialog):
         self.fetch_worker.start()
 
     def _on_models_loaded(self, success: bool, models: list, message: str):
+        # Keep the request's provider/endpoint/mode available on both callback
+        # branches. These values are captured before starting the worker; success
+        # handling must not depend on locals that were previously assigned only
+        # inside the failure branch.
+        provider_id, endpoint, is_lan = getattr(
+            self, "_pending_connection", (self._provider_id(), "", False)
+        )
         self.connect_button.setEnabled(True)
         self.button_box.setEnabled(True)
         self.provider_combo.setEnabled(True)
@@ -541,29 +555,44 @@ class APISettingsDialog(QDialog):
         self._update_profile_controls()
         self.model_combo.setEnabled(True)
         provider = self._current_provider()
-        is_lan = bool(getattr(provider, "has_lan_mode", False) and self.lan_mode.isChecked())
-        self.lan_mode.setEnabled(bool(getattr(provider, "has_lan_mode", False)))
-        self.primary_input.setEnabled(not is_lan)
+        provider_available = bool(getattr(provider, "is_available", True))
+        self.lan_mode.setEnabled(provider_available and bool(getattr(provider, "has_lan_mode", False)))
+        self.primary_input.setEnabled(provider_available and not is_lan)
         self.secondary_input.setEnabled(self.secondary_input.isVisible())
         if not success:
             if not getattr(provider, "is_available", True):
                 self._show_error(message)
                 return
-            provider_id, endpoint, is_lan = getattr(
-                self, "_pending_connection", (self._provider_id(), "", False)
-            )
             if provider_id == "ollama" and is_lan:
-                text = f"Ollama daemon is not active or unreachable at {endpoint}. Start it and try again."
+                text = tr("api_settings.ollama_daemon_unreachable", endpoint=endpoint)
             elif provider_id == "ollama":
-                text = f"Could not connect to the Ollama API at {endpoint}. Check the endpoint and API key."
+                if "invalid or missing" in message.lower():
+                    text = tr("api_settings.ollama_invalid_cloud_key")
+                else:
+                    text = tr("api_settings.ollama_api_unreachable", endpoint=endpoint)
             elif provider_id == "gemini":
-                text = "Could not connect to the Gemini API. Check the API key and internet connection."
+                text = (
+                    tr("api_settings.gemini_invalid_api_key")
+                    if "invalid api key" in message.lower()
+                    else tr("api_settings.gemini_api_unreachable")
+                )
             else:
-                text = f"Could not connect to {provider_id}. Check its credentials and endpoint."
-            self._show_error(f"{text}\n{message}")
+                text = tr("api_settings.provider_api_unreachable", provider=provider.display_name)
+            # Keep provider diagnostics when they add detail, but avoid showing the
+            # same generic failure twice for common model-list lookup failures.
+            detail = message if not any(token in message.lower() for token in (
+                "could not retrieve models", "connection error:"
+            )) else ""
+            self._show_error(f"{text}\n{detail}".strip())
             return
 
-        self.status_label.setText(message)
+        if provider_id == "ollama":
+            status_key = "api_settings.connected_ollama_local" if is_lan else "api_settings.connected_ollama_cloud"
+        elif provider_id == "gemini":
+            status_key = "api_settings.connected_gemini"
+        else:
+            status_key = "api_settings.connected_provider"
+        self.status_label.setText(tr(status_key, provider=provider.display_name))
         self.status_label.setStyleSheet("color: #00e676; font-weight: bold;")
 
         selected = self.model_combo.currentText().strip()
@@ -583,10 +612,7 @@ class APISettingsDialog(QDialog):
     def _save_and_accept(self):
         provider = self._current_provider()
         if not getattr(provider, "is_available", True):
-            self._show_error(
-                f"{provider.display_name} is not available yet. "
-                "See Help > Providers & Contribution for integration details."
-            )
+            self._show_error(tr("api_settings.provider_unavailable", provider=provider.display_name))
             return
         self._save_gemini_rpd_fields()
         profile_id = self._selected_profile_id()
@@ -596,7 +622,7 @@ class APISettingsDialog(QDialog):
             if saved_id in self._profiles:
                 self._profiles[saved_id]["credentials"] = values
         if not profile_id or not self.profile_name_input.text().strip():
-            self._show_error("Enter a name for this connection profile.")
+            self._show_error(tr("api_settings.enter_connection_profile_name"))
             return
         try:
             self.credential_manager.save_connection_profiles(self._profiles, profile_id)

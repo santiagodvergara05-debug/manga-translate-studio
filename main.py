@@ -12,12 +12,13 @@ import multiprocessing
 
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtCore import Qt, qInstallMessageHandler
+from PySide6.QtCore import Qt, qInstallMessageHandler, QLocale
 
 from src.frontend.main_window import MainWindow
 from src.utils.logger import logger
 from src.utils.paths import Paths
 from src.utils.config import Config
+from src.utils import i18n
 
 
 # /////////////////////////////////#
@@ -65,6 +66,15 @@ def main():
     # 3. Ensure all persistent directories exist
     Paths.initialize()
 
+    # Discover locale names from the small manifest and load only the selected
+    # UI catalog; manga source/target language controls remain independent.
+    i18n.init(
+        bundled_dir=Paths.LOCALES,
+        user_dir=Paths.USER_LOCALES,
+        settings_path=Paths.UI_SETTINGS,
+        system_locale=QLocale.system().name(),
+    )
+
     # 4. Install Qt diagnostic message filter
     qInstallMessageHandler(qt_message_handler)
 
@@ -73,6 +83,8 @@ def main():
     app.setStyle("Fusion")
     app.setFont(QFont("Segoe UI", 9))
     app.setApplicationName(Config.APP_NAME)
+    if i18n.current_language().lower().startswith("ar"):
+        app.setLayoutDirection(Qt.RightToLeft)
 
     logger.info(f"--- {Config.APP_NAME.upper()} STARTUP ---")
 
@@ -106,6 +118,25 @@ def main():
     # 8. Launch primary window
     try:
         window = MainWindow()
+        if warning := i18n.catalog_warning():
+            logger.warning("[LOCALIZATION] %s", warning)
+            from PySide6.QtWidgets import QMessageBox
+
+            language = warning.get("language", "")
+            dialog = QMessageBox(window)
+            dialog.setIcon(QMessageBox.Warning)
+            dialog.setWindowTitle(i18n.tr("locales.invalid.title"))
+            dialog.setText(i18n.tr(
+                "locales.invalid.body",
+                language=language,
+                reason=warning.get("reason", ""),
+            ))
+            dialog.setInformativeText(i18n.tr(
+                "locales.invalid.instructions",
+                language=language,
+            ))
+            dialog.setStandardButtons(QMessageBox.Ok)
+            dialog.exec()
         if app_icon:
             window.setWindowIcon(app_icon)
         window.show()

@@ -28,6 +28,11 @@ class Paths:
     LOGS = os.path.join(BASE_DIR, "logs")
     TRANSLATIONS = os.path.join(BASE_DIR, "translations")
     PROCESSED = os.path.join(BASE_DIR, "processed")
+    # UI locale catalogs are bundled read-only; user catalogs may override them
+    # beside the executable without changing the source package.
+    LOCALES = os.path.join(BUNDLE_DIR, "locales")
+    USER_LOCALES = os.path.join(BASE_DIR, "locales")
+    UI_SETTINGS = os.path.join(CACHE, "ui_settings.json")
 
     # 3. Static bundled assets packaged inside binary distribution
     ASSETS = os.path.join(BUNDLE_DIR, "assets")

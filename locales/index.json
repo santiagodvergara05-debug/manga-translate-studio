@@ -1,0 +1,16 @@
+{
+  "languages": {
+    "en": {
+      "native_name": "English",
+      "english_name": "English"
+    },
+    "es": {
+      "english_name": "Spanish",
+      "native_name": "Español",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "95f79785b683d57f0c8ce1721889c1eef6ddef9b5b15fa99f62cf2f6e577d141"
+    }
+  },
+  "schema_version": 1,
+  "source_catalog_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440"
+}

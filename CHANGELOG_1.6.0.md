@@ -1,6 +1,24 @@
 # Manga Translate Studio 1.6.0 — Change Log
 
-This document records the application changes made for the 1.6.0 development cycle. The desktop title now show **1.6.0 BETA 2** until the stable release is prepared.
+This document records the application changes made for the 1.6.0 development cycle through **BETA 3**. The beta label is temporary and will be removed when the stable release is prepared.
+
+## Beta 3 — changes since Beta 2
+
+This beta completes the initial UI localization phase and incorporates the final interface, status, and maintenance adjustments made after Beta 2.
+
+- Completed migration of user-facing application text to the localization layer. English is the required source catalog (`locales/en.json`); Spanish is included as a structurally verified, localized catalog (`locales/es.json`).
+- Added the language selector to the main header near Usage / Prices. It uses catalog display names, adapts its width to the selected language label, and supports right-to-left layout for Arabic locales.
+- Localized the main window, API settings, extraction options, help content, batch and page statuses, dialogs, and API pacing guidance. Provider IDs, model IDs, thinking values, file formats, and other logic identifiers remain stable and are not translated.
+- Kept UI localization separate from manga source/target language selection and prompt construction. Selecting an interface language changes visible application text; it does not rewrite the translation prompt or the language requested from the model.
+- Added selected-catalog-only loading and verification. The app reads the locale manifest and selected catalog rather than parsing every language catalog into memory. Invalid, stale, or unapproved catalogs fall back to English with a warning.
+- Established `locales/en.json` as the only source for new UI strings. Removed the proposed `en.source` sidecar so the repository does not carry an unused duplicate source file.
+- Added or refined the localization workflow documentation, catalog extraction/migration/checking commands, approval fingerprints, and release validation guidance. `TRANSLATION.md` now includes the localization integrity and review policy; `CONTRIBUTING.md` links to it and adds language-review checks.
+- Improved header sizing and spacing for translated text, including margins around the API pace selector and flexible sizing for longer labels. Added localized labels and multi-line help text for LOW, HIGH, and MAX request pacing.
+- Moved the interface-language selector beside Usage / Prices and refined the provider/model/thinking/status header so elapsed-work time is visible while a request or batch runs and the completed duration remains visible afterward.
+- Updated elapsed timer and status text so active work shows elapsed time, idle state does not display a misleading running timer, and a new translation job starts its own timer.
+- Expanded the localization catalog for labels and status text discovered during manual Spanish UI review, including provider/model/thinking labels, connection readiness, request pacing, and translated in-progress/completion states.
+
+The earlier **Beta 2** section below records what changed from Beta 1; the feature sections remain the cumulative 1.6.0 record.
 
 ## Beta 2 — changes since the published Beta 1
 
@@ -16,6 +34,7 @@ This section summarizes the changes made after the **1.6.0 BETA 1** release. The
 - Added **Alt + mouse wheel** as an additional canvas zoom shortcut while preserving normal wheel scrolling and Ctrl + wheel zoom.
 - Removed the unused provider-logo directory and the unused `src/utils/history.py` undo/redo module.
 - Expanded Help, contribution guidance, and project documentation for the new provider scaffolds and revised UI behavior.
+- Started Phase 4 UI localization: added a JSON catalog loader with source/catalog fingerprint verification, English recovery, a persistent interface-language selector, selected-catalog-only runtime loading, migration/validation tools, and PyInstaller catalog packaging. The migration and Spanish catalog were completed in Beta 3.
 
 ## Added
 
@@ -101,6 +120,14 @@ This section summarizes the changes made after the **1.6.0 BETA 1** release. The
 - `assets/icon_updating.svg` — retranslation-in-progress indicator for pages with existing text.
 - `assets/icon_script_synced.svg` — script-import/export synchronization indicator.
 - `TECHNICAL_AUDIT_1.6.0.md` — maintainability audit notes and JSON-loading optimization summary.
+- `TRANSLATION.md` — UI catalog workflow, validation commands, memory behavior, and localization review policy.
+- `locales/en.json` — required English source catalog for visible UI strings.
+- `locales/es.json` — Spanish UI catalog.
+- `locales/index.json` — locale names and generated verification fingerprints.
+- `src/utils/i18n.py` — catalog selection, lookup, formatting, and locale verification.
+- `tools/extract_strings.py` — UI string extraction and source-catalog report tool.
+- `tools/migrate_to_tr.py` — reviewed migration helper for converting hard-coded UI strings.
+- `tools/check_locales.py` — locale structure, placeholder, fingerprint, approval, and release validator.
 
 ## Removed repository file
 

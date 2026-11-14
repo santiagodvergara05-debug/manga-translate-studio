@@ -1,0 +1,19 @@
+warning: in the working copy of 'CHANGELOG_1.6.0.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'README.md', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/frontend/api_settings.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/frontend/usage_pricing.py', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/frontend/widgets.py', LF will be replaced by CRLF the next time Git touches it
+src/backend/translator.py:1444: trailing whitespace.
+[32m+[m[32m                self, tr("translator.file_exists"),[m[41m [m
+src/backend/translator.py:1470: trailing whitespace.
+[32m+[m[32m                self, tr("translator.script_created"),[m[41m [m
+src/backend/translator.py:1532: trailing whitespace.
+[32m+[m[32m                self, tr("translator.script_imported"),[m[41m [m
+src/frontend/main_window.py:401: trailing whitespace.
+[32m+[m[32m                tr("common.studio_busy"),[m[41m [m
+src/frontend/main_window.py:482: trailing whitespace.
+[32m+[m[32m                    self, tr("main.all_pages_completed"),[m[41m [m
+src/frontend/main_window.py:759: trailing whitespace.
+[32m+[m[32m                tr("main.batch_complete"),[m[41m [m
+src/frontend/main_window.py:830: trailing whitespace.
+[32m+[m[32m                tr("main.script_synchronized"),[m[41m [m

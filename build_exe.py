@@ -17,6 +17,7 @@ def build():
     root_dir = os.path.dirname(os.path.abspath(__file__))
     dist_dir = os.path.join(root_dir, "dist")
     icon_path = os.path.join(root_dir, "assets", "icon.ico")
+    locales_dir = os.path.join(root_dir, "locales")
 
     # PyInstaller execution configuration
     cmd = [
@@ -49,6 +50,17 @@ def build():
         "--hidden-import=src.backend.prompt_manager",
         "main.py"
     ]
+
+    # Include only the manifest and locale catalogs; generated source-location
+    # reports (for example, en.sources.json) are not runtime resources.
+    locale_files = sorted(
+        os.path.join(locales_dir, name)
+        for name in os.listdir(locales_dir)
+        if name.lower().endswith(".json")
+        and not name.lower().endswith(".sources.json")
+    )
+    for locale_file in locale_files:
+        cmd.insert(-1, f"--add-data={locale_file}{os.pathsep}locales")
 
     print("[*] Executing PyInstaller build command...")
     subprocess.run(cmd, check=True)
