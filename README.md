@@ -1,8 +1,8 @@
 # 🌌 Manga Translate Studio (MTS)
-**Next-Generation Multimodal AI Vision Translation Suite for Comics, Manga & Webtoons**
+**Multimodal vision translation workbench for comics, manga, and webtoons**
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
-[![Python Version](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-00d4ff)](https://www.python.org/)
+[![Python Version](https://img.shields.io/badge/Python-3.13-00d4ff)](https://www.python.org/)
 [![UI Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt6)-green)](https://www.qt.io/)
 [![Sibling App](https://img.shields.io/badge/Sibling_Project-Manga_Cleaner_Studio-ff007f)](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner)
 
@@ -10,11 +10,11 @@
 
 ## 📖 Overview
 
-**Manga Translate Studio (MTS)** is a desktop scanlation workbench built with **Python 3.12** and **PySide6 (Qt6)**. Designed as a dedicated companion and sibling application to **Manga Cleaner**, MTS bridges raw comic image extraction with multimodal Vision LLMs through Google Gemini and Ollama.
+**Manga Translate Studio (MTS)** is a desktop scanlation workbench built with Python and PySide6 (Qt6). It works alongside **Manga Cleaner** and uses multimodal vision models through the implemented Google Gemini and Ollama integrations.
 
-Instead of relying on standalone, error-prone OCR engines, MTS performs direct multimodal image analysis. It identifies visual speech bubbles, narration boxes, floating outside text, and comic sound effects (SFX), translating and structuring them into standard script files (`.txt`) ready for typesetting or direct import into [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner).
+MTS sends page images for multimodal analysis without a separate OCR stage. It identifies dialogue, narration, floating text, and comic sound effects (SFX), then organizes translations into `.txt` scripts for review and use with [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner).
 
-The interface locale is separate from the source and target languages used to translate manga. Ten interface languages are currently listed in `locales/index.json`. The runtime reads this small language index and loads only the selected catalog, keeping memory use low. See [TRANSLATION.md](TRANSLATION.md) for catalog verification and contribution. English is the fallback if a selected catalog cannot be verified.
+The interface language is separate from the source and target languages used for manga translation. Ten interface languages are listed in `locales/index.json`; at startup, MTS loads the selected catalog rather than every catalog. If a non-English catalog cannot be verified, the app warns and uses English for that session. See [TRANSLATION.md](TRANSLATION.md) for catalog contribution and verification.
 
 ---
 
@@ -22,24 +22,22 @@ The interface locale is separate from the source and target languages used to tr
 
 ![MANGA TRANSLATE STUDIO UI](.github/Ui.png)
 
+> **Image note:** The comic panel in this screenshot is included solely to demonstrate the application's interface and translation workflow. The artwork remains the property of its respective rights holders.
 
 ---
 
 ## ✨ Key Features
 
-* **Multimodal Vision Translation**: Direct image parsing without intermediate OCR steps. Supports Google Gemini (`gemini-3.1-flash-lite`, `gemini-3.5-flash-lite`, `gemini-3.8-flash`, `etc`) and Ollama instances (Localhost LAN and OpenAI-compatible `/v1` cloud endpoints).
-* **Inter-Page Continuity Injection**: Automatically extracts and injects trailing dialogues from previous pages into inference prompts, guaranteeing seamless grammatical continuity across panel breaks.
-* **Strict Format Preservation**: Generates and edits translation scripts strictly inside compliant `<translation> ... </translation>` tags, preserving editorial headers and notes for seamless ingestion in Manga Cleaner Studio.
-* **Two-Tier Script Organization**: Cleanly separates projects into `translations/<Series>/<Chapter>.txt`, allowing multi-chapter workspaces to remain organized without directory clutter.
-* **Adaptive Batch Orchestration**: Sequential chapter-level translation featuring adaptive cadence pacing to prevent HTTP 429 rate limits, with immediate halts on Daily Quota (`RPD`) exhaustion to protect API budgets.
-* **Custom Lore & Style Rules**: Dedicated user rules workspace (`cache/user_rules.txt`) to customize character voices, glossary terms, pronouns, and scanlation tone without bloating the technical core engine prompt.
-* **Saved Connection Profiles**: Switch between saved provider credentials, endpoints, models, and model settings. Usage history and Gemini RPD are tracked per connection profile.
-* **Configurable Prompt Options**: Preview the generated system prompt and toggle extraction features, including SFX meanings, duplicate SFX suppression, and contextual R19 vocalization guidance.
-* **Usage & Pricing**: Review provider-reported token and cache usage, estimate costs from editable USD-per-million-token rates, and import or export community JSON price tables.
-* **Gemini Request Meter**: Optional local requests-per-day (RPD) limit and usage count, editable in API Settings and grouped by saved connection profile and model.
-* **Reviewable Batch Work**: Inspect completed pages while a batch continues; pending and active pages remain locked. Wheel scrolling navigates long pages, and `Ctrl` or `Alt` + wheel zooms the canvas.
-* **Dynamic Provider Extensibility**: Fully decoupled backend architecture allowing community contributors to add new AI providers and language pairs via clean abstract classes.
-* **Upcoming provider scaffolds**: OpenAI (ChatGPT), xAI (Grok), Anthropic (Claude), OpenRouter, and DeepSeek are listed in API Settings as unavailable placeholders. They do not make API calls; see Help → Providers & Contribution to learn how to contribute an implementation.
+* **Image-based extraction and translation**: Implemented integrations for Google Gemini and Ollama, including local Ollama and compatible cloud endpoints.
+* **Page continuity and script export**: Supplies eligible preceding-page text as context and writes reviewed translations to `.txt` scripts using the Manga Cleaner `<translation>...</translation>` format.
+* **Batch review**: Translates pages sequentially. Completed pages remain available for review while the batch continues; unsent and active pages are protected from editing. Cancellation stops queued work, while an active provider request is allowed to finish.
+* **Request pacing**: LOW, HIGH, and MAX set minimum delays between request starts per provider. Pacing can reduce rate-limit risk but cannot guarantee that a provider will not return HTTP 429.
+* **Prompt controls**: Configure user rules and extraction options, and preview the resulting system prompt. Options include SFX meanings, repeated-SFX suppression, and contextual R19 vocalization guidance.
+* **Connection profiles**: Save and switch provider credentials/endpoints, models, and supported model settings.
+* **Usage and prices**: Review provider-reported token/cache metadata, estimate costs from editable USD-per-million-token rates, and import or export optional community price tables.
+* **Gemini RPD meter**: An optional local daily request limit and counter, editable in API Settings and tracked by connection profile and model. It is not a live Google quota lookup.
+* **Interface localization**: Choose from ten interface catalogs. Localization is separate from the languages used for manga translation.
+* **Provider contribution points**: OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek appear as unavailable scaffolds. They do not make API calls; see Help → Providers & Contribution before implementing one.
 
 See [CHANGELOG_1.6.0.md](CHANGELOG_1.6.0.md) for the detailed 1.6.0 change list.
 
@@ -131,9 +129,7 @@ We would like to give credit to the original creators and key contributors of th
 
 * **[NeTRuNNeRGLiTCH](https://github.com/NeTRuNNeRGLiTCH)**: Creator of the original [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner) project and the base studio architecture.
 * **[MavikBow](https://github.com/MavikBow)**: Original creator of the multi-task batch queue system, dark theme stabilization, and UI enhancement architecture introduced in Manga Cleaner Studio v3.2.0.
-* **[santiagodvergara05-debug](https://github.com/santiagodvergara05-debug)**: Core contributor to Manga Cleaner Studio (v3.2.0 canvas stabilization and author of the upcoming [Manga Cleaner Studio v3.3.2 Workspaces](https://github.com/santiagodvergara05-debug/manga-cleaner/tree/ver3.3.x)), and lead architect of **Manga Translate Studio**.
-
-> *Note: Manga Cleaner Studio v3.3.2 (with Typesetting workspaces) is currently maintained in the developer's [ver3.3.x branch](https://github.com/santiagodvergara05-debug/manga-cleaner/tree/ver3.3.x) pending upstream review.*
+* **[santiagodvergara05-debug](https://github.com/santiagodvergara05-debug)**: Core contributor to Manga Cleaner Studio, including v3.2.0 canvas stabilization and Workspaces, and lead architect of **Manga Translate Studio**.
 
 ---
 
@@ -141,13 +137,13 @@ We would like to give credit to the original creators and key contributors of th
 
 ### 1. Prerequisites
 
-* Python 3.10, 3.11, or 3.12 (64-bit recommended).
+* Python 3.13 (64-bit; the 1.6.0 Windows release build used Python 3.13.14).
 * Git installed on your system.
 
 ### 2. Clone the Repository
 
 ```bash
-git clone [https://github.com/santiagodvergara05-debug/manga-translate-studio.git](https://github.com/santiagodvergara05-debug/manga-translate-studio.git)
+git clone https://github.com/santiagodvergara05-debug/manga-translate-studio.git
 cd manga-translate-studio
 
 ```
@@ -157,8 +153,8 @@ cd manga-translate-studio
 ```bash
 python -m venv venv
 
-# Windows:
-.\venv\Scripts\activate
+# Windows PowerShell:
+.\venv\Scripts\Activate.ps1
 
 # Linux / macOS:
 source venv/bin/activate
@@ -168,7 +164,7 @@ source venv/bin/activate
 ### 4. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 
 ```
 
@@ -183,7 +179,7 @@ python main.py
 
 ## 📦 Portable Windows Build (`.EXE` package)
 
-Manga Translate Studio features an isolated build configuration designed to coexist **in the exact same directory** as Manga Cleaner without dependency collisions:
+Manga Translate Studio uses an isolated build configuration so it can coexist alongside Manga Cleaner without dependency collisions. Keep the applications in separate folders:
 
 ```bash
 python -m pip install PyInstaller
@@ -207,7 +203,7 @@ dist/
 
 ```
 
-Keep Manga Cleaner and Manga Translate Studio in separate application folders. Their packaged dependencies are isolated; users can still select the same translation-script folder from either application when needed.
+The packaged dependencies are isolated. Users can still select the same translation-script folder from either application when needed.
 
 ---
 
@@ -217,7 +213,7 @@ Keep Manga Cleaner and Manga Translate Studio in separate application folders. T
 | --- | --- |
 | `Hold [Space]` | Toggle hand tool for smooth canvas panning |
 | `Mouse Wheel` | Scroll vertically through long pages |
-| `Ctrl + Mouse Wheel` | Zoom centered on the cursor |
+| `Ctrl + Mouse Wheel` or `Alt + Mouse Wheel` | Zoom centered on the cursor |
 | `Middle Click` | Reset canvas zoom scale to 1:1 original size |
 | `Space + Click Drag` | Pan across ultra-high-resolution pages |
 
@@ -225,16 +221,5 @@ Keep Manga Cleaner and Manga Translate Studio in separate application folders. T
 
 ## 📜 License
 
-Distributed under the **Apache License 2.0**. See the [LICENSE](https://www.google.com/search?q=LICENSE) file for more details.
-
-```text
-Copyright 2026 santiagodvergara05-debug
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    [http://www.apache.org/licenses/LICENSE-2.0](http://www.apache.org/licenses/LICENSE-2.0)
-
-```
+Distributed under the **Apache License 2.0**. See the repository's [LICENSE](LICENSE) file.
 
