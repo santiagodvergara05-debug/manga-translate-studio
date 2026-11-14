@@ -181,32 +181,33 @@ python main.py
 
 ---
 
-## 📦 Standalone Portable Compilation (`.EXE`)
+## 📦 Portable Windows Build (`.EXE` package)
 
 Manga Translate Studio features an isolated build configuration designed to coexist **in the exact same directory** as Manga Cleaner without dependency collisions:
 
 ```bash
+python -m pip install PyInstaller
 python build_exe.py
 
 ```
 
 ### How Coexistence Works
 
-Standard PyInstaller builds place shared DLLs inside an `_internal/` directory. To prevent overwriting Manga Cleaner's dependencies, `build_exe.py` encapsulates all runtime libraries into an isolated folder:
+`build_exe.py` validates the localization catalogs before packaging, then places runtime dependencies and bundled resources in an isolated `MangaTranslate_Data/` folder. The executable depends on that folder and must not be distributed by itself. For a release, archive and upload the **entire `dist/MangaTranslate/` directory**:
 
 ```text
-MangaCleaner_CPU 3.3.2/
-├── _internal/                   # Manga Cleaner runtime libraries (untouched)
-├── MangaTranslate_Data/         # Manga Translate Studio runtime libraries (isolated)
-├── cache/                       # Shared persistent cache
-├── logs/                        # Shared diagnostics
-├── translations/                # Shared translation scripts (.txt)
-├── MangaCleaner_CPU.exe         # Cleaner binary
-└── MangaTranslate.exe           # Translator binary
+dist/
+└── MangaTranslate/              # Archive this entire folder for release
+    ├── MangaTranslate_Data/     # Isolated dependencies, assets, styles, and locales
+    ├── cache/                   # Persistent app settings and runtime data
+    ├── logs/                    # Diagnostics
+    ├── translations/            # Translation scripts (.txt)
+    ├── processed/               # Processed output
+    └── MangaTranslate.exe       # Application launcher
 
 ```
 
-Both tools run independently from the same root directory while seamlessly sharing project scripts and cache files.
+Keep Manga Cleaner and Manga Translate Studio in separate application folders. Their packaged dependencies are isolated; users can still select the same translation-script folder from either application when needed.
 
 ---
 
