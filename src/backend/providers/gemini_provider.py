@@ -162,7 +162,7 @@ class GeminiProvider(BaseAIProvider):
             if not model.lower().startswith("gemma-4-"):
                 payload["generationConfig"]["thinkingConfig"]["includeThoughts"] = (
                     not getattr(sys, "frozen", False)
-                    and os.environ.get("MTS_DEBUG", "1") == "1"
+                    and os.environ.get("MTS_DEBUG", "0") == "1"
                 )
 
         for attempt in range(max_retries + 1):

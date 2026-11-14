@@ -6,7 +6,7 @@ This document records the application changes made for the 1.6.0 development cyc
 
 This beta completes the initial UI localization phase and incorporates the final interface, status, and maintenance adjustments made after Beta 2.
 
-- Completed migration of user-facing application text to the localization layer. English is the required source catalog (`locales/en.json`); Spanish is included as a structurally verified, localized catalog (`locales/es.json`).
+- Completed migration of user-facing application text to the localization layer. English is the required source catalog (`locales/en.json`); the available catalogs now cover Spanish, French, Brazilian Portuguese, Simplified and Traditional Chinese, Korean, Japanese, Indonesian, and Arabic, in addition to English.
 - Added the language selector to the main header near Usage / Prices. It uses catalog display names, adapts its width to the selected language label, and supports right-to-left layout for Arabic locales.
 - Localized the main window, API settings, extraction options, help content, batch and page statuses, dialogs, and API pacing guidance. Provider IDs, model IDs, thinking values, file formats, and other logic identifiers remain stable and are not translated.
 - Kept UI localization separate from manga source/target language selection and prompt construction. Selecting an interface language changes visible application text; it does not rewrite the translation prompt or the language requested from the model.
@@ -17,6 +17,8 @@ This beta completes the initial UI localization phase and incorporates the final
 - Moved the interface-language selector beside Usage / Prices and refined the provider/model/thinking/status header so elapsed-work time is visible while a request or batch runs and the completed duration remains visible afterward.
 - Updated elapsed timer and status text so active work shows elapsed time, idle state does not display a misleading running timer, and a new translation job starts its own timer.
 - Expanded the localization catalog for labels and status text discovered during manual Spanish UI review, including provider/model/thinking labels, connection readiness, request pacing, and translated in-progress/completion states.
+- Updated the directory documentation to describe additional locale catalogs generically and identify `locales/index.json` as the available-language manifest, without enumerating every locale file in the README tree.
+- Audited request pacing, diagnostic logging, worker shutdown, locale catalog structure, and source references before the executable packaging phase. Fixed cross-provider pacing contention, made prompt/response diagnostics opt-in, and deferred app shutdown until active provider threads finish.
 
 The earlier **Beta 2** section below records what changed from Beta 1; the feature sections remain the cumulative 1.6.0 record.
 
@@ -124,6 +126,7 @@ This section summarizes the changes made after the **1.6.0 BETA 1** release. The
 - `locales/en.json` — required English source catalog for visible UI strings.
 - `locales/es.json` — Spanish UI catalog.
 - `locales/index.json` — locale names and generated verification fingerprints.
+- Additional verified locale catalogs for French, Brazilian Portuguese, Simplified and Traditional Chinese, Korean, Japanese, Indonesian, and Arabic; their filenames are discovered through `locales/index.json`.
 - `src/utils/i18n.py` — catalog selection, lookup, formatting, and locale verification.
 - `tools/extract_strings.py` — UI string extraction and source-catalog report tool.
 - `tools/migrate_to_tr.py` — reviewed migration helper for converting hard-coded UI strings.

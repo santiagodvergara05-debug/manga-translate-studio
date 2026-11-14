@@ -1195,18 +1195,20 @@ class TranslatorPanel(QWidget):
             self._set_result_status(tr("translator.status_blocked_by_content_moderation"), "#ff3344")
             self.mw.set_page_status(path, "safety")
             self.mw.file_list.update_item_state(path, "safety", result.message)
-            QMessageBox.warning(
-                self,
-                tr("translator.content_blocked_by_llm_provider"),
-                tr("translator.page_fname_message_recommendation_to_pro", fname=fname, message=result.message)
-            )
+            if not getattr(self.mw, "_close_pending", False):
+                QMessageBox.warning(
+                    self,
+                    tr("translator.content_blocked_by_llm_provider"),
+                    tr("translator.page_fname_message_recommendation_to_pro", fname=fname, message=result.message)
+                )
             return
 
         if status == ProviderStatus.SERVER_BUSY:
             self._set_result_status(tr("translator.status_provider_busy_overloaded"), "#ffd600")
             self.mw.set_page_status(path, "busy")
             self.mw.file_list.update_item_state(path, "busy", result.message)
-            QMessageBox.warning(self, tr("translator.server_busy"), tr("translator.message_please_retry_in_a_couple", message=result.message))
+            if not getattr(self.mw, "_close_pending", False):
+                QMessageBox.warning(self, tr("translator.server_busy"), tr("translator.message_please_retry_in_a_couple", message=result.message))
             return
 
         if status == ProviderStatus.EMPTY:
@@ -1227,7 +1229,8 @@ class TranslatorPanel(QWidget):
             self.mw.file_list.update_item_state(
                 path, "error", result.message or tr("widgets.status_translation_failed")
             )
-            QMessageBox.critical(self, tr("translator.translation_error"), tr("translator.failed_to_translate_fname_message", fname=fname, message=result.message))
+            if not getattr(self.mw, "_close_pending", False):
+                QMessageBox.critical(self, tr("translator.translation_error"), tr("translator.failed_to_translate_fname_message", fname=fname, message=result.message))
             return
 
         # Inference successful
@@ -1254,7 +1257,8 @@ class TranslatorPanel(QWidget):
         self._set_result_status(tr("translator.status_translation_failed"), "#ff5252")
         self.mw.set_page_status(path, "error")
         self.mw.file_list.update_item_state(path, "error", error_msg[:60])
-        QMessageBox.critical(self, tr("translator.translation_error"), tr("translator.failed_to_translate_basename_error_msg", basename=os.path.basename(path), error_msg=error_msg))
+        if not getattr(self.mw, "_close_pending", False):
+            QMessageBox.critical(self, tr("translator.translation_error"), tr("translator.failed_to_translate_basename_error_msg", basename=os.path.basename(path), error_msg=error_msg))
 
     def on_manually_add_bubble(self):
         """Manually appends an empty dialogue entity card to the editor."""

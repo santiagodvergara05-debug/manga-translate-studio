@@ -14,7 +14,7 @@
 
 Instead of relying on standalone, error-prone OCR engines, MTS performs direct multimodal image analysis. It identifies visual speech bubbles, narration boxes, floating outside text, and comic sound effects (SFX), translating and structuring them into standard script files (`.txt`) ready for typesetting or direct import into [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner).
 
-The interface locale is separate from the source and target languages used to translate manga. UI catalogs are JSON files under `locales/`; the runtime reads the small index and loads only the selected catalog. See [TRANSLATION.md](TRANSLATION.md) for catalog verification and contribution. The catalog migration is in progress; English remains the fallback.
+The interface locale is separate from the source and target languages used to translate manga. Ten interface languages are currently listed in `locales/index.json`. The runtime reads this small language index and loads only the selected catalog, keeping memory use low. See [TRANSLATION.md](TRANSLATION.md) for catalog verification and contribution. English is the fallback if a selected catalog cannot be verified.
 
 ---
 
@@ -54,8 +54,9 @@ Manga Translate Studio/
 ├── .gitignore                          # Excludes local credentials, history, and generated files
 ├── assets/                            # Application icons and branding
 ├── locales/                           # UI language catalogs
-│   ├── en.json                        # English source strings
-│   └── index.json                     # Language names and source fingerprint
+│   ├── en.json                        # English source strings and primary language
+│   ├── <language>.json                # Additional catalogs; see index.json
+│   └── index.json                     # Available languages and source fingerprints
 ├── Pricing_Models_Providers/          # Community JSON price references for import
 │   ├── README.md                      # Price schema and contribution guidance
 │   ├── google_models.json             # Google Gemini and Gemma reference rates

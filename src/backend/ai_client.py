@@ -22,15 +22,16 @@ from src.backend.providers.openrouter_provider import OpenRouterProvider
 from src.backend.providers.deepseek_provider import DeepSeekProvider
 from src.backend.usage_manager import UsageManager
 
-# Source-mode diagnostics include prompts and provider responses; defaulting MTS_DEBUG
-# to 1 is convenient for development but can write private page text to the console.
-DEBUG_AI_LOGS = (not getattr(sys, "frozen", False)) and os.environ.get("MTS_DEBUG", "1") == "1"
+# Content diagnostics can include private page text and provider responses. Keep them
+# opt-in for source runs; packaged builds never enable this diagnostic path.
+DEBUG_AI_LOGS = (not getattr(sys, "frozen", False)) and os.environ.get("MTS_DEBUG", "0") == "1"
 
 
 class RequestPacer:
-    """Spaces request starts; see the shared-lock note in wait() before changing it."""
+    """Spaces request starts independently for each provider."""
 
-    _lock = threading.Lock()
+    _lock = threading.Lock()  # Guards creation/access of the per-provider locks.
+    _provider_locks = {}
     _last_request_by_provider = {}
     _intervals = {"low": 4.1, "high": 1.5, "max": 0.5}
 
@@ -38,10 +39,11 @@ class RequestPacer:
     def wait(cls, provider: str, mode: str = "low"):
         interval = cls._intervals.get(str(mode).lower(), cls._intervals["low"])
         provider_id = str(provider).lower()
-        # AUDIT: this global lock is held during sleep, so waiting for one provider
-        # currently blocks other providers too. Keep this visible until pacing is
-        # changed to reserve provider-specific start times without sleeping locked.
+        # Serialize only requests for this provider. Never hold the registry lock
+        # during sleep, so a slow cadence for one service cannot block another.
         with cls._lock:
+            provider_lock = cls._provider_locks.setdefault(provider_id, threading.Lock())
+        with provider_lock:
             now = time.monotonic()
             previous = cls._last_request_by_provider.get(provider_id)
             if previous is not None:

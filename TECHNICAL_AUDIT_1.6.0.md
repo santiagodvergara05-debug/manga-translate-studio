@@ -1,110 +1,93 @@
-# Technical Audit — Manga Translate Studio 1.6.0
+# Technical Audit — Manga Translate Studio 1.6.0 Beta 3
 
-## Scope
+Audit date: 2026-11-14
+Purpose: final source and maintenance review before preparing the Windows executable.
 
-Static maintenance review of the Python modules, runtime JSON flows, UI-to-backend call paths, packaging entry points, and repository documentation. No translation behavior or provider payload format was intentionally changed during the audit. Runtime tests were not run.
+## Scope and limits
 
-## Changes made
+Reviewed the tracked application code, provider and worker paths, UI signal wiring, JSON persistence and loading, locale catalogs and manifest, build entry points, README, and the 1.6.0 changelog. This is a source-level audit. It does not certify live API behavior, translation quality, every GUI layout, or a packaged executable.
 
-### Repeated JSON parsing
+The application could not be launched or compiled from this audit environment because Windows denied starting the repository's Python executable. Therefore the official locale release check, Python compilation, GUI smoke test, and executable build remain required in the developer's Windows environment. A PowerShell structural check parsed all ten locale catalogs and compared their 328 source keys, placeholders, and manifest display names; it did not assess translation quality or reproduce the checker's SHA-256 approval calculation.
 
-- `UsageManager` now retains parsed usage history per manager instance and reuses it while the file's modification time and size remain unchanged. This removes repeated full-file JSON parsing during the main window's periodic usage refresh.
-- The cache is invalidated after usage history is recorded or cleared. Writes remain atomic, and a different process/manager that replaces the file is detected through its file signature.
-- Replaced a JSON encode/decode round-trip used to clone default pricing data with `copy.deepcopy`.
+## Changes made during this audit
 
-### Dead code
+### Request pacing
 
-- Removed `src/utils/history.py`. Repository search found no imports or callers; its image and mask undo methods were stubs, and the remaining generic undo stack was unused. Removed its entry from the README directory tree.
-- Kept `usage_profile` cleanup in `CredentialManager`: this is a one-time migration path for older local settings, not an active UI feature. Removing it would leave obsolete data in users' existing configuration files.
-- Kept abstract provider methods and exception-handling fallbacks; these are intentional extension/error paths, not unimplemented application features.
+- Replaced the single provider-wide pacing lock with a lock per provider. Requests to the same provider remain serialized at the selected LOW, HIGH, or MAX minimum interval. Waiting on one service no longer blocks a different service.
+- The short registry lock is used only to obtain the provider lock and is released before waiting. This preserves the per-provider timestamp invariant without holding a global lock during sleep.
 
-## Findings by subsystem
+### Diagnostic privacy
 
-### Provider and request layer
+- Prompt/request and raw-response diagnostic logging is now opt-in for source runs with `MTS_DEBUG=1`; the default is off. Packaged builds continue to disable it.
+- Gemini thought summaries follow the same opt-in setting. This avoids logging story text or requesting debug-only thought summaries during ordinary source use.
 
-- `AIClientManager` centralizes provider selection, request pacing, dispatch, and usage recording. Provider-specific request construction and retry behavior are kept in the provider classes.
-- `BaseAIProvider` owns shared image encoding and response normalization. Its abstract methods are required extension points.
-- Prompt/image order and provider token reporting are provider-specific. Cache hit rates are reported by the API; the application should not infer cache hits from prompt equality.
-- Debug mode prints prompt/request diagnostics and may print raw provider responses. This is useful during development but should remain disabled in packaged builds and should not be used with sensitive content when enabled.
+### Application shutdown
 
-### Usage and pricing JSON
+- Closing the main window during an active single-page or batch translation is now deferred until the synchronous provider worker has returned.
+- A batch close stops dispatching queued pages and lets the in-flight request finish. It no longer relies on `QThread.quit()` or a one-second wait to interrupt a synchronous HTTP call; those cannot safely stop that call.
+- Close-pending translation result handlers avoid opening modal error dialogs while shutdown is waiting.
 
-- `pricing_tables.json` holds editable rates and Gemini RPD state. Pricing rows are loaded on demand; it is not a collection of locale files.
-- `usage_history.json` is capped at 10,000 events and is the only potentially large JSON file in the current runtime flow. The UI refresh previously caused repeated parsing; that path now uses the parsed cache described above.
-- API settings and prompt options are loaded once during their manager/dialog initialization. They do not currently cause repeated JSON reads in a timer loop.
-- The usage history cache reduces parsing and temporary allocation churn, but intentionally retains one parsed history list in memory. For substantially larger histories, a database or bounded pagination would be a better follow-up than loading the full file.
+### Localization and documentation
 
-### Image memory observation
+- The current locale index lists ten interface languages and the application loads the selected catalog rather than eagerly parsing every language file.
+- README now describes English as the primary source catalog, additional catalogs generically, and `locales/index.json` as the available-language manifest. It intentionally does not enumerate locale JSON files in the tree.
+- The Beta 3 changelog records the added catalogs, UI work, and audit changes.
 
-- `MainWindow.image_sessions` retains decoded NumPy arrays for every visited page until project reset. Large chapters can therefore consume much more RAM than the JSON settings/history. This cache is used when navigating pages, so it was not removed as part of the JSON-specific change. A bounded LRU or keeping only the active image should be considered in a separate, measured change.
+## Findings and disposition
 
-### Localization readiness
+### Resolved in this audit
 
-- UI strings and some defaults are currently embedded in Python/QSS, while source/target language metadata is centralized in `src/backend/languages.py`.
-- The system prompt already receives the selected target language dynamically; avoid hard-coding a language in shared prompt rules.
-- When localization is implemented, load only the selected locale JSON plus a small fallback catalog. Do not eagerly parse every locale JSON into RAM. Keep prompt-language instructions separate from UI translations so models continue receiving the intended English technical prompt.
+1. **Cross-provider pacing contention — fixed.** The request pacer had per-provider timestamps but held a shared lock while sleeping. Independent providers could block each other. Per-provider locks now match the documented behavior.
+2. **Content diagnostics enabled by default — fixed.** Source-mode logs could include prompts, page text, and model responses. Those diagnostics now require explicit `MTS_DEBUG=1` opt-in.
+3. **Unsafe window teardown during active requests — fixed in source.** The prior close path could accept the event while a synchronous provider call still ran, and did not account for the single-page worker. Shutdown now waits asynchronously for both worker paths. A Windows GUI test is still needed to confirm the lifecycle in the actual Qt runtime.
+4. **Stale repository documentation — fixed.** README no longer describes localization as pending and the directory tree represents the current runtime layout without listing each locale file.
 
-### Maintenance notes
+### Dead-code and connectivity review
 
-- `MainWindow` and `TranslatorPanel` remain large orchestration/UI modules. Their event handlers are connected from `init_ui` and Qt signals; moving code without following these signal paths can silently break user workflows. Future refactors should extract cohesive controllers incrementally.
-- OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek are registered as unavailable scaffolds that inherit the shared `ProviderScaffold` implementation. The settings dialog blocks connection testing and saving until a maintainer supplies and verifies a real integration.
-- `CredentialManager._ensure_connection_profiles` intentionally mirrors the active saved profile into legacy provider fields and removes the obsolete usage-group field while migrating old settings.
-- Provider error handling contains broad catches around external API and image operations because those operations can fail independently. Narrowing them should preserve user-facing errors and batch continuation behavior.
+- No disconnected active Gemini or Ollama provider path was identified. Both are registered and used by the client manager.
+- OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek files are intentional unavailable scaffolds surfaced as unavailable in settings. They are not dead code; they are extension points and should remain clearly marked until real provider integrations exist.
+- `BaseAIProvider` abstract methods and provider scaffold/error results are required contracts and fallback paths.
+- `MainWindow.set_page_status` and `mark_current_modified` are connected to status and editor-change flows. They must not be removed as unused helpers.
+- `CredentialManager.update_provider_credentials` has no in-tree caller, but is a complete public/helper operation. Keep it unless external integration compatibility is intentionally dropped.
+- `Paths.ensure_directories` has no in-tree caller and carries a backward-compatibility promise. Keep it for now; remove only with an explicit compatibility decision.
+- The `IconProvider` `lock` alias currently resolves to the same asset as `processing`, and no in-tree call requests the alias. This is a low-risk cleanup candidate, not a confirmed runtime defect; retain until external consumers are ruled out.
+- `src/utils/history.py` and `src/utils/system_info.py` are absent, and no in-tree imports reference them. Hardware telemetry is not needed for current usage/pricing features.
 
-## Data safety
+### Memory and JSON observations
 
-- Do not commit `cache/api_config.json`, `cache/usage_history.json`, `cache/pricing_tables.json`, prompt files, or user projects. The API configuration can contain credentials.
-- Imported provider price JSON remains user data and should merge by provider/model/plan according to the import behavior, not replace unrelated providers' rates.
+- Runtime configuration and prompt option JSON are read at manager/dialog initialization, not repeatedly from a periodic UI refresh.
+- Usage history is capped at 10,000 entries. Its manager caches parsed content and invalidates that cache after writes/clears or when the file signature changes. This avoids parsing the whole history on each refresh, while still retaining the bounded list in memory.
+- Price tables are user-editable and loaded through the usage manager. Imported price JSON merges rows so unrelated providers/models are retained.
+- Locale catalogs are selected through the small `locales/index.json` manifest. The UI should continue loading only the selected catalog plus its fallback instead of parsing every locale catalog into RAM.
+- `MainWindow.image_sessions` retains decoded page arrays until project reset. Large image series may consume significant memory. This cache supports revisiting pages; consider a measured bounded LRU/active-page policy if profiling shows material memory pressure. No speculative eviction was introduced in this audit.
 
-## Review limits
+### Localization review
 
-- `git diff --check` completed without whitespace errors.
-- Python runtime/lint checks were not run in this audit environment. The changes should be exercised in the project's Windows virtual environment before release.
+- Ten locale catalog entries are present: English plus Spanish, Brazilian Portuguese, French, Simplified Chinese, Traditional Chinese, Korean, Japanese, Indonesian, and Arabic.
+- Structural validation in this review found valid JSON, 328 source keys per catalog, matching placeholder sets, and locale names aligned with the index. This does not review whether translations are idiomatic, complete in meaning, or visually correct at every display size.
+- The repository's `tools/check_locales.py --release` remains the authoritative release gate because it validates approval markers and source/catalog fingerprints. It could not be run here.
+- Arabic and longer translated labels need a visual RTL/layout pass in the real application. The README tree uses `locales/index.json` (the actual filename and runtime manifest), not a new `language.json` file.
 
-## Follow-up static audit (2026-11-13)
+## Pre-executable release checklist
 
-The pass reviewed all tracked Python modules under `src/`, plus `main.py`, `build_exe.py`, and `generate_icons.py`. It traced UI signal handlers, worker dispatch, provider registry entries, and references for suspicious low-use methods. This is a source-level audit only; it does not certify runtime behavior or third-party API compatibility.
+Run these from the repository's Windows PowerShell environment with the project virtual environment available:
 
-### Confirmed findings to address before release
+```powershell
+python tools/check_locales.py --release
+python -m compileall -q main.py src tools build_exe.py generate_icons.py
+python main.py
+python build_exe.py
+```
 
-#### High — closing the window can leave a translation QThread running
+Before publishing the executable, smoke-test at minimum:
 
-- `MainWindow.closeEvent` only handles `is_batching`; a single-page request runs in `TranslatorPanel.active_worker` and is not joined or otherwise stopped on close.
-- During batch close, `QThread.quit()` only asks the event loop to exit. The worker is executing a synchronous provider call and `wait(1000)` can time out while the HTTP request is still running (provider request timeouts are much longer). The handler then accepts the close event regardless.
-- This creates a shutdown race and can produce a running-thread-destroyed error or an abrupt exit. A follow-up should use a safe close-pending state: request cancellation where supported, keep the window alive while the synchronous request finishes, and close only after worker completion. A forced thread termination is not recommended because it can corrupt Python/Qt state.
-- References: `src/frontend/main_window.py:891-909`, `src/backend/translator.py:1130-1173`, `src/backend/ai_client.py:230-281`, and provider request timeouts in `src/backend/providers/gemini_provider.py:172` / `ollama_provider.py:159,244`.
+- Start and close the app while a single-page request is active and while a batch request is active.
+- Confirm batch cancellation stops pending pages but lets the active provider call finish without a Qt thread-destroyed error.
+- Confirm LOW/HIGH/MAX pacing remains per provider and that separate providers do not serialize behind each other's delay.
+- Open every interface catalog, including Arabic, and inspect header sizing, right-to-left behavior, long labels, API settings, rules, help, and status messages.
+- Verify that credentials, prompt files, usage history, pricing state, project images, and generated output are not bundled as user data or committed.
+- Run the packaged build from a clean directory to ensure assets, locale files, and the locale manifest are included and the fallback works.
 
-#### Medium — request pacing is global across providers, despite its per-provider description
+## Audit conclusion
 
-- `RequestPacer` stores last-start timestamps by provider, but holds one class-wide lock while sleeping. If a request for one provider is waiting for its interval, another provider cannot pass the same lock. Thus the implementation couples independent providers and can delay unrelated work.
-- This is not dead code; it is on the request path for both single-page and batch translations. The next change should use per-provider locks (or reserve start times under a short global critical section and sleep after releasing it).
-- Reference: `src/backend/ai_client.py:30-50,178`.
-
-#### Medium — source-mode debug logging exposes prompts and model output by default
-
-- `DEBUG_AI_LOGS` defaults to enabled in non-frozen runs because `MTS_DEBUG` defaults to `"1"`. The request log prints the full system prompt and page/context prompt, and response logging can print raw provider output and extracted text.
-- These logs can contain user rules, story text, and sensitive page content. Packaged builds disable this path, but developers and source users are opted in unless they explicitly set `MTS_DEBUG=0`.
-- Before public source distribution, consider defaulting diagnostics off and requiring an explicit opt-in. Keep token/status diagnostics available without content logging.
-- References: `src/backend/ai_client.py:27,73-107,165-174`; Gemini thought summaries are also requested under the same default in `src/backend/providers/gemini_provider.py:163-169`.
-
-### Dead-code and connection review
-
-- No evidence was found that provider implementations registered in `PROVIDERS` are disconnected. Gemini and Ollama are active; OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek deliberately inherit `ProviderScaffold` and are surfaced as unavailable placeholders. Keep them documented as scaffolds until real integrations replace them.
-- `MainWindow.set_page_status` is connected to translation result/error paths; `mark_current_modified` is called by the editor change handler. Neither is dead.
-- `CredentialManager.update_provider_credentials` has no internal callers in the current source tree. It is fully implemented and documented, so classify it as an unused public/helper candidate rather than deleting it without checking external integrations.
-- `Paths.ensure_directories` has no internal caller but explicitly promises backward compatibility to external integrations. Retain it unless that compatibility promise is intentionally removed.
-- `IconProvider`'s `"lock"` alias maps to the same asset as `"processing"`; no call site currently requests the alias. It is a safe cleanup candidate after confirming no external plugin depends on the state key.
-- `BaseAIProvider` abstract methods and `ProviderScaffold` error results are required extension/fallback behavior, not dead code.
-- The removed `src/utils/history.py` remains absent from the source tree and README tree.
-
-### Comments and maintainability
-
-- Complex lifecycle and persistence code already has useful docstrings/comments in `ProjectResetController`, `UsageManager`, `RequestPacer`, batch orchestration, prompt composition, and provider request handling. Avoid adding comments that merely restate a function name or each obvious assignment.
-- The most valuable next comments are alongside the eventual fixes for worker shutdown and per-provider pacing, since they should explain lifecycle and concurrency invariants rather than narrate syntax.
-- Localization remains deferred. Keep user-facing text identifiable during the later extraction pass, and do not translate provider payload/system rules as a side effect of this audit.
-
-### Audit disposition
-
-- Confirmed high/medium findings are recorded above; they were not silently changed during this documentation pass because they affect thread lifecycle, request scheduling, and privacy defaults.
-- Unreferenced items are classified as candidates with compatibility context instead of automatically deleted. Static text search cannot prove that a public helper is unused by external scripts.
-- No tests or GUI session were run. Recheck the thread shutdown behavior and cross-provider pacing in the Windows environment before calling the audit release-ready.
+The confirmed source-level issues found in request pacing, diagnostic defaults, and worker shutdown have been corrected. No additional confirmed dead application path was found; low-use helpers and provider scaffolds are retained where they serve compatibility or extension purposes. The code is ready for developer-side Windows validation, but this audit does not claim that compilation, GUI checks, API integration checks, or executable packaging have passed.

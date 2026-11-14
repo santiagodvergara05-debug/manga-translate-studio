@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
         self._header_info = ""
         self._job_started_at = None
         self._last_job_duration = None
+        self._close_pending = False
 
         # Viewport navigation state
         self.is_space_moving = False
@@ -798,6 +799,11 @@ class MainWindow(QMainWindow):
             )
         self._batch_previous_states.clear()
         successful_count = self.completed_batch_tasks - len(self.failed_batch_tasks)
+        if self._close_pending:
+            # Finish the current synchronous provider call, discard unsent work,
+            # then close without opening a modal completion/error dialog.
+            QTimer.singleShot(0, self.close)
+            return
         if not self.stop_requested and not self.failed_batch_tasks and not pending:
             self.translator_page.show_status_message(
                 tr(
@@ -989,24 +995,32 @@ class MainWindow(QMainWindow):
             self.canvas.setDragMode(QGraphicsView.NoDrag)
         super().keyReleaseEvent(event)
 
+    def _translation_worker_running(self) -> bool:
+        """Check both batch and single-page threads before allowing Qt teardown."""
+        batch_running = bool(self.worker_thread and self.worker_thread.isRunning())
+        single_worker = getattr(self.translator_page, "active_worker", None)
+        single_running = bool(single_worker and single_worker.isRunning())
+        return batch_running or single_running
+
+    def _close_after_translation(self):
+        """Poll until synchronous provider work has returned, then close safely."""
+        if self.is_batching or self._translation_worker_running():
+            QTimer.singleShot(100, self._close_after_translation)
+            return
+        self.close()
+
     def closeEvent(self, event: QCloseEvent):
-        """Attempts to stop batch work before closing; see the shutdown audit note."""
-        # AUDIT: a provider call runs synchronously inside its worker. quit() cannot
-        # interrupt it, and this bounded wait can expire while it is still running.
-        # Single-page workers also need to be included in a future close-pending flow.
-        if self.is_batching:
-            self.stop_requested = True
-            self.batch_queue.clear()
-            if self.worker_thread and self.worker_thread.isRunning():
-                # Disconnect signals to avoid delivering events to destroyed UI elements
-                if self.worker:
-                    try:
-                        self.worker.finished.disconnect()
-                        self.worker.error.disconnect()
-                    except RuntimeError:
-                        pass
-                self.worker_thread.quit()
-                self.worker_thread.wait(1000)
+        """Defer application teardown while a provider QThread is still running."""
+        if self.is_batching or self._translation_worker_running():
+            event.ignore()
+            if not self._close_pending:
+                self._close_pending = True
+                if self.is_batching:
+                    # Stop dispatching queued pages; the active synchronous request
+                    # must finish naturally because QThread.quit() cannot interrupt it.
+                    self.on_cancel_batch_clicked()
+                QTimer.singleShot(100, self._close_after_translation)
+            return
         super().closeEvent(event)
 
     def refresh_usage_summary(self):
