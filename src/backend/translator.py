@@ -269,9 +269,9 @@ class RulesDialog(QDialog):
         options_layout.addStretch(1)
         self.option_checks["sfx"].toggled.connect(self._sync_sfx_dependent_options)
         self._sync_sfx_dependent_options(self.option_checks["sfx"].isChecked())
+        self.tabs.addTab(tab_options, tr("translator.extraction_options"))
         self.tabs.addTab(tab_user, tr("translator.user_rules_tone_lore"))
         self.tabs.addTab(tab_prompt, tr("translator.system_prompt_read_only"))
-        self.tabs.addTab(tab_options, tr("translator.extraction_options"))
         lay.addWidget(self.tabs)
 
         self.txt_user_rules.textChanged.connect(self._update_prompt_preview)
