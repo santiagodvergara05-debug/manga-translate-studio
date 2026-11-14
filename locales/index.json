@@ -8,7 +8,55 @@
       "english_name": "Spanish",
       "native_name": "Español",
       "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
-      "catalog_sha256": "95f79785b683d57f0c8ce1721889c1eef6ddef9b5b15fa99f62cf2f6e577d141"
+      "catalog_sha256": "1e3058a4241e2d2d49afb58baf62f38a581e3364f333acee9f826c1b46d0e71a"
+    },
+    "pt-BR": {
+      "english_name": "Portuguese (Brazil)",
+      "native_name": "Português (Brasil)",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "7fa5c8308f1f086d7964b22a284927945ae6c757a57fb9c6fb8e39a972984acf"
+    },
+    "fr": {
+      "english_name": "French",
+      "native_name": "Français",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "4417b6496fa7241f178efd432d94b8ecdfe2fc42f3b588353a17a5bff963abcf"
+    },
+    "zh-CN": {
+      "english_name": "Chinese (Simplified)",
+      "native_name": "简体中文",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "16d14490d389aefade3fea03b762db670a8abbe73ba00ec89fa873e40d65f1e0"
+    },
+    "zh-TW": {
+      "english_name": "Chinese (Traditional)",
+      "native_name": "繁體中文",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "ba308acc63aadc7ae200c348e611aca1eab20f237a8193765709443a2317f3be"
+    },
+    "ko": {
+      "english_name": "Korean",
+      "native_name": "한국어",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "1d10cc316fd45964eb69f1f3f3725eafdee85454b193b560f9ec826b4570185d"
+    },
+    "ja": {
+      "english_name": "Japanese",
+      "native_name": "日本語",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "1e267fa968fa51d40fc3483e8fb9b5c4b0f37203a8bc89e6c3329920f9ff10e4"
+    },
+    "id": {
+      "english_name": "Indonesian",
+      "native_name": "Bahasa Indonesia",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "eb0808db3b690b43d06f1ec62e4facc4756e5d46cf7a050226b327060bdb20bb"
+    },
+    "ar": {
+      "english_name": "Arabic",
+      "native_name": "العربية",
+      "verified_source_sha256": "e1323611e51bf79b335c4b19584ae6c4e8c15ea14f2a1c569c793d6889685440",
+      "catalog_sha256": "f8855f74c4d682a7e4477d37c7b297148dde71a7c681822e30d8f35f13cd71af"
     }
   },
   "schema_version": 1,
