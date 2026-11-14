@@ -1,147 +1,141 @@
 # Manga Translate Studio 1.6.0 — Change Log
 
-This document records the application changes made for the 1.6.0 development cycle through **BETA 3**. The beta label is temporary and will be removed when the stable release is prepared.
+This is the cumulative change record for the **stable 1.6.0 release**. It covers the development work from Beta 1 through Beta 3 and the final release preparation. Beta headings preserve the history of when work entered the project; the feature inventory describes the resulting 1.6.0 code.
 
-## Beta 3 — changes since Beta 2
+## Release overview
 
-This beta completes the initial UI localization phase and incorporates the final interface, status, and maintenance adjustments made after Beta 2.
+Version 1.6.0 is a substantial reconstruction and redesign of the application. Work across the beta cycle replaced or reorganized major parts of provider configuration, request handling, usage tracking, page review, localization, and packaging. The project was close to having to rebuild these areas around the new requirements; the work therefore includes both new capabilities and changes to the architecture and workflows that connect them.
 
-- Completed migration of user-facing application text to the localization layer. English is the required source catalog (`locales/en.json`); the available catalogs now cover Spanish, French, Brazilian Portuguese, Simplified and Traditional Chinese, Korean, Japanese, Indonesian, and Arabic, in addition to English.
-- Added the language selector to the main header near Usage / Prices. It uses catalog display names, adapts its width to the selected language label, and supports right-to-left layout for Arabic locales.
-- Localized the main window, API settings, extraction options, help content, batch and page statuses, dialogs, and API pacing guidance. Provider IDs, model IDs, thinking values, file formats, and other logic identifiers remain stable and are not translated.
-- Kept UI localization separate from manga source/target language selection and prompt construction. Selecting an interface language changes visible application text; it does not rewrite the translation prompt or the language requested from the model.
-- Added selected-catalog-only loading and verification. The app reads the locale manifest and selected catalog rather than parsing every language catalog into memory. Invalid, stale, or unapproved catalogs fall back to English with a warning.
-- Established `locales/en.json` as the only source for new UI strings. Removed the proposed `en.source` sidecar so the repository does not carry an unused duplicate source file.
-- Added or refined the localization workflow documentation, catalog extraction/migration/checking commands, approval fingerprints, and release validation guidance. `TRANSLATION.md` now includes the localization integrity and review policy; `CONTRIBUTING.md` links to it and adds language-review checks.
-- Improved header sizing and spacing for translated text, including margins around the API pace selector and flexible sizing for longer labels. Added localized labels and multi-line help text for LOW, HIGH, and MAX request pacing.
-- Moved the interface-language selector beside Usage / Prices and refined the provider/model/thinking/status header so elapsed-work time is visible while a request or batch runs and the completed duration remains visible afterward.
-- Updated elapsed timer and status text so active work shows elapsed time, idle state does not display a misleading running timer, and a new translation job starts its own timer.
-- Expanded the localization catalog for labels and status text discovered during manual Spanish UI review, including provider/model/thinking labels, connection readiness, request pacing, and translated in-progress/completion states.
-- Updated the directory documentation to describe additional locale catalogs generically and identify `locales/index.json` as the available-language manifest, without enumerating every locale file in the README tree.
-- Audited request pacing, diagnostic logging, worker shutdown, locale catalog structure, and source references before the executable packaging phase. Fixed cross-provider pacing contention, made prompt/response diagnostics opt-in, and deferred app shutdown until active provider threads finish.
+This changelog is the stable release's detailed record. Features explicitly marked as removed or unavailable below are not active capabilities of the stable application.
 
-The earlier **Beta 2** section below records what changed from Beta 1; the feature sections remain the cumulative 1.6.0 record.
+## Beta 1 — new settings, usage tracking, and review workflow
 
-## Beta 2 — changes since the published Beta 1
+- Added the API and Model Settings dialog and saved connection profiles. Profiles hold a provider, endpoint or credentials, selected model, and applicable model settings; users can add, rename, switch, and remove profiles.
+- Added Gemini model-aware thinking controls, including supported Gemini 3 levels and Minimal/High options for applicable Gemma 4 models. Thinking settings are not sent to unsupported providers or models.
+- Added LOW and HIGH request pacing for single-page and batch translation. LOW enforces at least 4.1 seconds between application request starts per provider; HIGH enforces at least 1.5 seconds. Provider processing and retry delays are separate.
+- Separated stable system instructions from page-specific context. Gemini receives the system instruction through its system-instruction field; Ollama receives it as a system message/field. Each request includes the current page image rather than resending earlier page images.
+- Added handling for provider-reported input, output, thinking, request-count, and cached-input usage where available. The application reports returned cache counts rather than inferring cache hits.
+- Added configurable extraction options for SFX, narration, floating outside text, translation variants, tone notes, and R19 vocalization guidance. Added optional SFX meanings as editor guidance, excluded from exported scripts.
+- Added a read-only system-prompt preview that reflects the selected medium, languages, user rules, and extraction options.
+- Added target-aware SFX localization rules and language-pair checks for page continuity.
+- Added Usage / Prices with local request history, editable USD-per-million-token price rows, optional cached-input rates and plan variants, price JSON import/export, and community reference price tables for Google and Ollama.
+- Added Gemini RPD limit and usage tracking. The counter is local, grouped by the then-current usage identity and model, and follows the Pacific calendar date; it is not a live Google quota query.
+- Added elapsed time for individual translations and whole batches, batch review while processing continues, and improved canvas scrolling and zoom for long pages.
+- Expanded Help with guidance for thinking, extraction options, usage, pricing, cache reporting, RPD, and pacing.
+- Removed RAM/hardware telemetry and its `psutil` dependency, the separate Gemini RPM/TPM limits view, and prefilled price/RPD values for new installations.
 
-This section summarizes the changes made after the **1.6.0 BETA 1** release. The sections below remain the cumulative change record for the full 1.6.0 development cycle.
+## Beta 2 — page states, profiles, and additional workflows
 
-- Replaced the optional **Usage group** with saved connection profiles as the identity for request history and Gemini RPD tracking. The field and its grouping behavior were removed.
-- Expanded shared request pacing with **MAX** (at least 0.5 seconds between request starts); the Help tooltip now documents the theoretical RPM ceilings for LOW, HIGH, and MAX.
-- Moved Gemini RPD editing into **API Settings**, where it appears only for Gemini. The main header retains a compact meter/status display.
-- Added optional suppression of repeated, identical SFX lettering on the same page. It requires SFX extraction and is disabled by default.
-- Added OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek provider scaffolds. They are explicitly unavailable and make no API requests until contributors implement and verify them.
-- Improved translation review during batches: completed pages remain editable, active/queued pages are locked, prior text remains visible during retranslation and on request errors, and cancellation restores unsent pages to their previous states.
-- Added distinct page indicators for waiting, processing, updating, modified, and script-synchronized states; connected manual edits to the Modified state and corrected stale progress/status updates after a batch ends.
-- Added **Alt + mouse wheel** as an additional canvas zoom shortcut while preserving normal wheel scrolling and Ctrl + wheel zoom.
-- Removed the unused provider-logo directory and the unused `src/utils/history.py` undo/redo module.
-- Expanded Help, contribution guidance, and project documentation for the new provider scaffolds and revised UI behavior.
-- Started Phase 4 UI localization: added a JSON catalog loader with source/catalog fingerprint verification, English recovery, a persistent interface-language selector, selected-catalog-only runtime loading, migration/validation tools, and PyInstaller catalog packaging. The migration and Spanish catalog were completed in Beta 3.
+- Replaced the optional Usage group with saved connection profiles as the identity used for usage history and Gemini RPD tracking.
+- Added MAX request pacing: at least 0.5 seconds between application request starts. The Help guidance documents theoretical ceilings of about 14.6 RPM for LOW, 40 RPM for HIGH, and 120 RPM for MAX. These are pacing ceilings; provider processing time can reduce actual throughput, and MAX can trigger provider rate limits or HTTP 429 responses.
+- Moved Gemini RPD editing into API Settings, where the controls appear only for Gemini; kept a compact RPD indicator in the main header.
+- Added optional suppression of repeated identical SFX lettering on the same page. It is disabled by default, requires SFX extraction, and does not deduplicate dialogue or other entity types.
+- Added explicitly unavailable provider scaffolds for OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek. They make no API calls and cannot be used as active integrations until implemented and verified.
+- Added distinct page states and icons for queued work, active processing, retranslation of existing text, provider busy/rate-limit responses, local edits, and script synchronization. Manual editor changes now mark the page as modified.
+- Kept existing text visible during retranslation and on provider errors. Successful responses replace the old result; empty-page responses clear it. Cancellation returns unsent pages to their prior states and preserves results from pages already processed.
+- Corrected stale status/progress displays after batch completion and cancellation. Added a clear batch summary with completed, failed, pending, and elapsed-time information.
+- Added Alt + mouse wheel as an additional canvas zoom shortcut alongside Ctrl + mouse wheel; ordinary wheel scrolling remains available for long pages.
+- Removed the unused provider-logo directory and unused `src/utils/history.py` undo/redo module.
+- Began the UI localization system: JSON catalogs, locale manifest and fingerprints, English fallback, migration and checking tools, and packaging support. Catalog migration and the initial language set were completed in Beta 3.
 
-## Added
+## Beta 3 — localization, interface refinement, and audit fixes
 
-### Provider settings and request handling
+- Completed the UI localization layer with English as the required source catalog and nine additional interface catalogs: Spanish, Brazilian Portuguese, French, Simplified Chinese, Traditional Chinese, Korean, Japanese, Indonesian, and Arabic.
+- Added a language selector to the main header, using catalog display names. Its width adapts to longer translated names, and Arabic receives right-to-left handling.
+- Localized visible application UI, including the main window, API settings, extraction options, Help, page and batch status, dialogs, and pacing guidance. Provider/model identifiers, thinking values, file formats, and other stable logic identifiers remain unchanged.
+- Kept interface localization separate from manga source/target language selection and prompt construction. Changing the interface language does not change the language requested from the model.
+- Added selected-catalog loading with manifest and fingerprint verification. The runtime loads the small locale index and selected catalog rather than eagerly parsing all catalogs. An invalid or unverified selected catalog falls back to English with a warning.
+- Made `locales/en.json` the sole source catalog for new UI strings; excluded generated source-location metadata and duplicate source sidecars from runtime packaging.
+- Added string extraction, reviewed migration, catalog structure/placeholder/fingerprint checks, approval and release validation. Documented the workflow and localization integrity/review policy in `TRANSLATION.md`; updated `CONTRIBUTING.md` with localization and review guidance.
+- Refined header layout for translated labels, including spacing around the API pace selector, placement of the language selector beside Usage / Prices, and flexible sizing for provider, model, thinking, status, and elapsed-time text.
+- Localized active and completed request/batch statuses and the elapsed-work timer. The timer runs only during translation work, displays the elapsed duration while active, and retains the final duration when the job ends.
+- Expanded the locale catalog as manual UI review identified missing labels, connection states, tooltips, and in-progress/completion messages.
+- Updated README's project tree and localization description to show `en.json` as the primary catalog and `index.json` as the language manifest without listing every language JSON individually.
+- Fixed request pacing so concurrent work for one provider does not block requests to another provider.
+- Made prompt/request and raw-response diagnostics opt-in for source runs using `MTS_DEBUG=1`; packaged builds keep these diagnostics disabled.
+- Made application shutdown wait safely for synchronous provider work. Closing during a batch stops dispatch of queued pages and lets the active request return before teardown.
 
-- Added a dedicated **API and Model Settings** dialog with saved connection profiles. A profile groups a provider with its endpoint or credentials, selected model, and model-specific settings; users can add, rename, switch, and remove profiles.
-- Added model-aware Gemini thinking-level choices, including Gemini 3 model levels and the Minimal/High modes exposed for Gemma 4. Unsupported providers and models do not receive a thinking setting.
-- Added request pacing choices shared by single-page and batch translation: **LOW** waits at least 4.1 seconds between application request starts for a provider (~14.6 theoretical RPM maximum), **HIGH** at least 1.5 seconds (40 RPM), and **MAX** at least 0.5 seconds (120 RPM). Provider processing/retry delays can reduce actual rates; MAX may trigger provider rate limits or HTTP 429 responses.
-- Split stable system instructions from page-specific text context in requests. Gemini receives the stable prompt through `systemInstruction`; Ollama sends it as a system message/field. The current page image is sent with the user request, and earlier page images are not resent.
-- Added usage metadata handling for provider-reported input, output, thinking, request-count, and cached-input tokens where available. The application displays actual reported cache counts; it does not infer cache hits.
-- Added provider scaffolds for OpenAI, xAI, Anthropic (Claude), OpenRouter, and DeepSeek. They appear in API Settings but fail closed: no API calls are made, and unavailable providers cannot be saved as active connections. The Help guide links contributors to the repository and implementation guidance.
+## Stable 1.6.0 — release preparation
 
-### Configurable extraction prompts
+- Set the application version to stable `1.6.0`.
+- Updated `build_exe.py` to validate required source/build inputs and every catalog listed in `locales/index.json`, then run `tools/check_locales.py --release` before invoking PyInstaller.
+- Added post-build checks for the executable, bundled icon, stylesheet, locale manifest, and catalog files. The build creates the persistent runtime directories and prints the distribution layout.
+- Kept the onedir distribution isolated under `MangaTranslate_Data` so it can coexist with Manga Cleaner without sharing bundled dependencies. The complete `dist/MangaTranslate/` folder, including `MangaTranslate_Data`, must be distributed; the `.exe` alone is insufficient.
+- The developer's release build completed with PyInstaller 6.22.3 and Python 3.13.14. Its locale release check reported zero errors and warnings for the nine translated catalogs, each containing 328 source keys. This confirms the reported catalog/build validation; it does not claim a full GUI or live-provider test on every configuration.
+- Updated README's setup and packaging guidance for the stable application and full-folder Windows distribution.
 
-- Added persisted extraction options in `cache/prompt_options.json`: sound effects, narration, floating outside text, translation variants, tone notes (subtext), R19 vocalization guidance, and SFX meaning.
-- Added an SFX meaning option that is disabled by default and available only while SFX extraction is enabled. Meanings appear as editor guidance and are omitted from exported translation scripts.
-- Added an optional setting to return only the first occurrence of identical SFX lettering on a page. It is disabled by default, requires SFX extraction, and does not deduplicate dialogue or other entity types.
-- Added an optional R19 vocalization mode, disabled by default, to help distinguish breathing, effort, pain, surprise, and laughter using the artwork context. It does not add an output field.
-- Added a read-only system-prompt preview that updates to reflect the selected medium, languages, user rules, and extraction options.
-- Kept SFX localization target-aware through `get_sfx_rule_for_target()`. Language-specific examples are selected only for the corresponding target; other supported targets receive a general rule based on the selected language.
-- Added language-pair checks to page continuity so translations from a different source/target pair are not injected into a request.
+## Final 1.6.0 feature record
 
-### Usage, pricing, and Gemini RPD
+### Providers, profiles, and request handling
 
-- Added **Usage / Prices** with a local request history filtered by provider. Each request is associated with its saved connection profile. History includes timestamp, model, request count, reported input/cache/output tokens, and estimated cost; it does not store prompts, images, or API credentials.
-- Added editable price rows using USD per million tokens, including optional cached-input rates and plan variants. Cost estimates use reported usage and the currently matching provider/model/plan rates; missing rates are shown as **Not configured**.
-- Added price JSON import/export. Imports merge by provider, model, and plan, updating matching rows while retaining unrelated rows so users can load several providers' tables.
-- Added community reference tables in `Pricing_Models_Providers/` for Google Gemini/Gemma and Ollama. The application’s local price table starts empty; users choose which public tables to import.
-- Added a **Clear all history** action. It removes request records across providers and connection profiles while preserving price rows and Gemini RPD counters.
-- Added optional, editable Gemini **RPD limit** and **RPD in use** fields in API Settings. The main header keeps a compact status indicator. A zero limit disables the local meter. Counters are grouped by saved connection profile and model and roll over using the Pacific calendar date; this is a local tracker, not a live Google quota query.
+- Google Gemini and Ollama are the implemented provider integrations. Ollama supports local instances and compatible cloud `/v1` endpoints.
+- API Settings provides saved profiles for provider credentials or endpoint, model, and applicable provider settings. Gemini thinking levels are exposed only where supported.
+- Gemini's optional local RPD limit and counter are editable in API Settings. The header displays the current compact meter. Counters are profile/model-specific and use the Pacific calendar day; they are not fetched from Google's quota service.
+- LOW, HIGH, and MAX pace application request starts per provider at minimum intervals of 4.1, 1.5, and 0.5 seconds. Their theoretical maxima are approximately 14.6, 40, and 120 request starts per minute. Actual throughput can be lower because of provider processing and retries; aggressive pacing can receive rate-limit responses.
+- Provider responses are normalized for the editor and usage history. Token/cache figures are recorded only when the provider reports them; the application does not infer cache hits.
+- OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek remain unavailable scaffolds, not working integrations.
 
-### Translation review and interface
+### Prompt and extraction configuration
 
-- Replaced the hardware-memory indicator with a header showing the active provider, model, thinking availability/value, request state, Gemini RPD status, API pace control, and a **USAGE / PRICES** button.
-- Added elapsed-time feedback for an individual request and total batch duration. A new job resets the timer; a batch keeps one timer across its pages.
-- Improved batch auditing: completed pages can be selected and edited while processing continues; queued and currently active pages remain locked. The batch no longer needs to switch the selected image automatically for each request.
-- Improved the canvas for long pages: the mouse wheel scrolls vertically, `Ctrl` or `Alt` + wheel zooms, and changing the selected image returns the viewport to the top.
-- Expanded the Help dialog with thinking-level, token-impact, extraction-option, cache, pricing, connection-profile, RPD, and request-pacing guidance.
+- User rules and extraction settings are persisted in the local `cache/` directory. Options cover comic SFX, narration, floating text, translation variants, tone notes, R19 vocalization guidance, optional SFX meaning, and optional repeated-SFX suppression.
+- SFX meaning is editor guidance and is not exported into the translation script. Repeated-SFX suppression affects only identical SFX lettering on one page and requires SFX extraction.
+- The read-only prompt preview reflects the active medium, source and target languages, user rules, and extraction options. Stable system instructions are kept separate from page-specific context.
+- Page continuity checks the language pair before using prior translations. Earlier page images are not resent with a new page request.
 
-### Page status and script synchronization
+### Usage and pricing
 
-- Separated page-list indicators by meaning: queued pages use a waiting hourglass; a fresh in-flight page uses the lock; retranslation of a page with existing text uses a distinct updating icon; provider overload/rate-limit responses use the dedicated busy warning icon.
-- Kept existing translations visible while a page is being reprocessed. A successful response replaces them, an empty-page response clears them, and provider/API errors leave the previous text in place.
-- Restored queued pages to their prior states when a batch is stopped before they are sent. Successfully processed pages keep their result state; the batch summary now replaces the stale per-page “Model working” message when the run ends.
-- Connected manual edits in dialogue text fields, variant selection, and add/remove dialogue actions to the local **Modified** state. The previously unconnected `mark_current_modified()` handler now runs when these edits occur.
-- Added a separate **Script Synced** state and document-check icon for pages loaded from a translation script or successfully written to `.TXT`. **Modified** now means an unsynced local edit rather than imported/exported script data.
-- Updated the Help guide's page-status legend to describe queued, processing, updating, server-busy, locally modified, and script-synced states separately.
+- Usage / Prices shows local request records by provider/profile, reported tokens and cache counts where available, and estimated cost based on the currently matching provider/model/plan rates.
+- Price rows are editable in USD per million tokens and support optional cached-input rates and plan variants. JSON import/export merges matching provider/model/plan rows while retaining unrelated ones. Community Google and Ollama price references are available for user-selected import.
+- A new local price table does not require bundled reference rates; migration code removes recognized legacy sample rows from existing tables. Missing rates are identified as not configured rather than treated as zero-cost.
+- Clearing request history preserves price configuration and Gemini RPD counters. History does not store prompts, page images, API keys, or tokens.
 
-## Changed
+### Page review, batch work, and scripts
 
-- Updated provider requests and normalized results to carry system prompts, thinking settings, connection profile IDs, request pacing, and provider-reported usage metadata through the worker layer.
-- Replaced the optional usage-group mechanism with saved connection profiles as the single identity for usage history and Gemini RPD tracking.
-- Extended Gemini model discovery to include Gemma 4 and exposed thinking levels according to the selected model identifier.
-- Updated Ollama response parsing to retain cache counters when returned by cloud-compatible or local endpoints.
-- Expanded normalized entity data so optional SFX meanings can be displayed in the editor without changing `.TXT` output.
-- Updated project reset handling to clear the new per-page language and usage state along with translation session data.
-- Updated PyInstaller configuration and dependencies to match the revised feature set.
-- Changed the application version constant to `1.6.0 BETA` for the current development build.
-- Updated the timer/status refresh flow so idle usage-summary refreshes no longer overwrite the completed translation or batch status with stale inference progress.
+- Page indicators distinguish unassigned, queued, processing, updating an existing result, ready, empty, provider busy, safety blocked, locally modified, script synchronized, and unrecoverable error states.
+- During retranslation, prior text stays visible until a response arrives. Success replaces it; a successful empty result clears it; API/provider errors leave it intact.
+- Batch work is sequential. Completed pages remain reviewable/editable while work continues; active and queued pages are locked. Cancellation stops unsent work, restores queued pages' earlier states, and preserves completed results.
+- Manual edits, variant changes, and dialogue add/remove actions mark the page as locally modified. Loading a script or successfully writing it marks pages as script synchronized.
+- `.TXT` scripts preserve the `<translation>...</translation>` contract and are synchronized without editing the source manga images. The app supports creating/loading scripts and writing the project dialogues into the selected script.
+- Active jobs show elapsed time and finished jobs retain their duration in the status/header. Idle state does not present a running timer.
+- Project reset clears the current in-memory project/session and translation work state while preserving files on disk, configured API credentials, and persistent user settings.
 
-## Removed
+### Interface, canvas, and localization
 
-- Removed the RAM/hardware telemetry widget and `src/utils/system_info.py`, along with the `psutil` dependency and its packaging import. The header space now presents translation provider and usage information.
-- Removed the unused `assets/icon_provider/` directory and its Gemini/Ollama logos. The interface identifies providers by text, so these unreferenced assets only added packaging and maintenance overhead.
-- Removed the unused `src/utils/history.py` undo/redo module. Repository search found no imports or callers; the image/mask undo methods were stubs and the remaining generic undo stack was unused.
-- Removed the separate Gemini limits tab and its RPM, TPM, and external-request table. The remaining local quota helper is the optional Gemini RPD limit/count in API Settings with a compact status in the main header.
-- Removed prefilled local price and Gemini RPD defaults for new installations. Price references are distributed separately under `Pricing_Models_Providers/` and imported by the user.
+- The header presents the active provider, model, applicable thinking setting, request/batch status and duration, API pace, interface language, and Gemini RPD indicator.
+- Canvas wheel scrolling navigates long pages; Ctrl or Alt + wheel zooms; selecting an image resets the viewport to the top. Space supports panning and middle click restores 1:1 zoom.
+- Ten interface languages are currently registered in `locales/index.json`: English, Spanish, Brazilian Portuguese, French, Simplified Chinese, Traditional Chinese, Korean, Japanese, Indonesian, and Arabic.
+- The interface-language catalogs are separate from translation source/target language choices. English is the source and fallback. The runtime loads only the selected catalog plus required fallback data and warns/falls back if verification fails.
+- `tools/check_locales.py` is the structural/release gate for key parity, placeholders, locale manifest and fingerprints. A passing structural check does not establish linguistic quality or visual fit for every display and language.
 
-## New repository files
+### Privacy, reliability, and help
 
-- `src/backend/usage_manager.py` — local usage, pricing, cache metadata, profile identity, and Gemini RPD persistence.
-- `src/frontend/api_settings.py` — provider settings and saved connection-profile dialog.
-- `src/frontend/usage_pricing.py` — usage history, price editing, and JSON import/export UI.
-- `src/backend/providers/anthropic_provider.py` — unavailable provider scaffold for Anthropic (Claude).
-- `src/backend/providers/deepseek_provider.py` — unavailable provider scaffold for DeepSeek.
-- `src/backend/providers/openai_provider.py` — unavailable provider scaffold for OpenAI.
-- `src/backend/providers/openrouter_provider.py` — unavailable provider scaffold for OpenRouter.
-- `src/backend/providers/xai_provider.py` — unavailable provider scaffold for xAI.
-- `Pricing_Models_Providers/README.md` — price-table format and contribution notes.
-- `Pricing_Models_Providers/google_models.json` — Google reference pricing rows.
-- `Pricing_Models_Providers/ollama_models.json` — Ollama reference pricing rows.
-- `assets/icon_waiting.svg` — queued-page hourglass indicator.
-- `assets/icon_updating.svg` — retranslation-in-progress indicator for pages with existing text.
-- `assets/icon_script_synced.svg` — script-import/export synchronization indicator.
-- `TECHNICAL_AUDIT_1.6.0.md` — maintainability audit notes and JSON-loading optimization summary.
-- `TRANSLATION.md` — UI catalog workflow, validation commands, memory behavior, and localization review policy.
-- `locales/en.json` — required English source catalog for visible UI strings.
-- `locales/es.json` — Spanish UI catalog.
-- `locales/index.json` — locale names and generated verification fingerprints.
-- Additional verified locale catalogs for French, Brazilian Portuguese, Simplified and Traditional Chinese, Korean, Japanese, Indonesian, and Arabic; their filenames are discovered through `locales/index.json`.
-- `src/utils/i18n.py` — catalog selection, lookup, formatting, and locale verification.
-- `tools/extract_strings.py` — UI string extraction and source-catalog report tool.
-- `tools/migrate_to_tr.py` — reviewed migration helper for converting hard-coded UI strings.
-- `tools/check_locales.py` — locale structure, placeholder, fingerprint, approval, and release validator.
+- Source-run prompt/request and raw-response diagnostics require explicit `MTS_DEBUG=1`; frozen executable builds keep them off.
+- Closing during a synchronous API call is deferred until worker completion. Batch shutdown stops dispatching pending pages and allows the active call to return.
+- Help documents request pacing, Gemini RPD, provider availability, page indicators, extraction options, usage/pricing, and localization-related interface behavior.
 
-## Removed repository file
+## Removed, replaced, and intentionally unavailable
 
-- `src/utils/system_info.py` — hardware/process memory telemetry implementation.
-- `src/utils/history.py` — unused undo/redo implementation and stubs.
+- **Usage group:** removed and replaced by saved connection profiles as the history/RPD identity.
+- **Gemini limits tab:** removed; RPM/TPM and external-request table are not part of 1.6.0. Gemini RPD remains a separate optional local tracker.
+- **RAM/hardware widget:** removed with `src/utils/system_info.py` and the `psutil` dependency.
+- **Provider logo directory:** removed because provider names are shown as text and no code uses those logo files.
+- **Undo/redo module:** removed `src/utils/history.py`; the reviewed module was not connected to active workflows.
+- **`en.source` sidecar:** not used. `locales/en.json` is the single English source catalog; generated `*.sources.json` metadata is developer-only and excluded from builds/versioned runtime content.
+- **Additional provider names in settings:** OpenAI, xAI, Anthropic, OpenRouter, and DeepSeek are visible contribution scaffolds only. They do not send requests.
+- **Translation-engine scope:** interface localization does not localize or rewrite model prompts, manga source text, or target-language instructions.
 
-## Local runtime files
+## New and maintained repository components
 
-The following files are created under the git-ignored `cache/` directory and should not be committed:
+- `src/backend/usage_manager.py` — local usage history, price management, reported usage/cache metadata, profile identity, and Gemini RPD persistence.
+- `src/frontend/api_settings.py` and `src/frontend/usage_pricing.py` — provider/profile settings and usage/pricing UI.
+- `src/backend/providers/` — implemented Gemini/Ollama integrations, provider contract, and explicitly unavailable scaffolds for other providers.
+- `assets/icon_waiting.svg`, `icon_updating.svg`, and `icon_script_synced.svg` — queued, retranslation, and script-synchronization indicators.
+- `locales/en.json`, `locales/index.json`, and the registered catalogs — source strings, language manifest, and translations.
+- `src/utils/i18n.py` and `tools/check_locales.py`, `extract_strings.py`, `migrate_to_tr.py` — locale runtime, extraction/migration workflow, verification, approval, and release validation.
+- `build_exe.py` — validated isolated PyInstaller onedir build and distribution-resource verification.
+- `TRANSLATION.md`, `CONTRIBUTING.md`, `TECHNICAL_AUDIT_1.6.0.md`, and `checklist_PR_1.6.0.md` — localization policy/workflow, contributor review, audit record, and release checklist.
+- `Pricing_Models_Providers/` — community reference price data for user import; these files are not the user's private runtime price table.
 
-- `api_config.json` — provider credentials/settings and saved connection profiles.
-- `core_rules.txt`, `user_rules.txt`, and `prompt_options.json` — prompt configuration.
-- `pricing_tables.json` — locally imported and edited prices plus Gemini RPD state.
-- `usage_history.json` — local usage records.
+## Local runtime data
+
+The application creates or uses local, git-ignored data under `cache/`, `logs/`, `translations/`, and `processed/`. This includes provider settings and saved profiles, prompt/user rules, prompt options, pricing/RPD state, usage history, interface-language choice, logs, and user scripts/output. These user-specific files are not part of the repository's source catalogs or the packaged default user data.
