@@ -26,7 +26,7 @@ These are interface languages. The source and target languages used to translate
 1. Add a stable key and a non-empty English value to `locales/en.json`.
 2. Request visible text in code through `tr()` or `tr_label()`; do not hard-code UI messages. Keep IDs, enum values, model/provider names, paths, file formats, shortcuts, and values used by program logic unchanged. For translated labels backed by stable IDs, store the ID as item data and read it with `currentData()`.
 3. Use named placeholders such as `{path}` or `{count}` and preserve the same names in every catalog. Keep required HTML, literal tokens, file formats, and shortcut keys intact.
-4. Update the translated catalogs. A contributor may use an LLM or translate manually. New strings may temporarily retain the English source value, but should be localized when a fluent contributor is available.
+4. Update the translated catalogs either manually or with an LLM. For the LLM workflow, select and copy the complete contents of `locales/en.json` (or attach that file), ask the model to translate the values into the target language, and request one complete JSON catalog for the target locale code, such as `pt-BR.json`. Save the result as `locales/<code>.json`. This workflow is allowed; the key verifier is provided in part to catch missing, extra, or malformed keys and placeholders in generated catalogs. New strings may temporarily retain the English source value, but should be localized when a fluent contributor is available.
 5. Approve and verify catalogs from the repository root:
 
    ```bash
@@ -84,10 +84,11 @@ If the English source changes while a secondary catalog's approval is stale, the
 
 ### LLM-assisted localization
 
-- [ ] Use the current `locales/en.json` and specify the target language and locale code. The English JSON may be supplied directly to an LLM as the translation source.
-- [ ] Tell the LLM to return a complete JSON catalog; preserve every key, placeholder, format token, shortcut, and required markup. Do not let it invent approval fingerprints or metadata.
+- [ ] Use the current `locales/en.json` as the source. You may select and copy the entire JSON into an LLM, or attach the file; specify the target language and locale code.
+- [ ] Tell the LLM to return a complete JSON catalog for `locales/<code>.json`, not a partial translation, summary, or list of changed strings. Preserve every key, placeholder, format token, shortcut, and required markup; do not invent approval fingerprints or metadata.
 - [ ] Compare the output with the English source. Correct mistranslations, omissions, unnatural phrasing, inconsistent terminology, and any unrelated or added content.
 - [ ] Validate and approve the catalog with `python tools/check_locales.py --approve locales/<code>.json`, then run `python tools/check_locales.py --release`.
+- [ ] Review all verifier findings. The tool checks that keys and placeholders are structurally consistent; it does not prove that the LLM translated every value accurately or naturally.
 - [ ] Have a fluent human review the translated phrases in the application context before marking **Human audit** as Yes. Until then, record `No — requires human review`.
 - [ ] Record the LLM and human contributors accurately, set the localization version to the source version actually reviewed, and report which checks were run.
 
