@@ -4,6 +4,10 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python Version](https://img.shields.io/badge/Python-3.13-00d4ff)](https://www.python.org/)
 [![UI Framework](https://img.shields.io/badge/GUI-PySide6%20(Qt6)-green)](https://www.qt.io/)
+[![Interface Languages](https://img.shields.io/badge/Interface%20Languages-10-7b61ff)](locales/index.json)
+[![Windows](https://img.shields.io/badge/Windows-Available-2ea44f)](#windows-availability)
+[![macOS](https://img.shields.io/badge/macOS-Coming%20Soon-lightgrey)](#windows-availability)
+[![Linux](https://img.shields.io/badge/Linux-Coming%20Soon-lightgrey)](#windows-availability)
 [![Sibling App](https://img.shields.io/badge/Sibling_Project-Manga_Cleaner_Studio-ff007f)](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner)
 
 ---
@@ -15,6 +19,10 @@
 MTS sends page images for multimodal analysis without a separate OCR stage. It identifies dialogue, narration, floating text, and comic sound effects (SFX), then organizes translations into `.txt` scripts for review and use with [Manga Cleaner Studio](https://github.com/NeTRuNNeRGLiTCH/manga-cleaner).
 
 The interface language is separate from the source and target languages used for manga translation. Ten interface languages are listed in `locales/index.json`; at startup, MTS loads the selected catalog rather than every catalog. If a non-English catalog cannot be verified, the app warns and uses English for that session. See [TRANSLATION.md](TRANSLATION.md) for catalog contribution and verification.
+
+### <a id="windows-availability"></a>Platform availability
+
+The current packaged release is available for **Windows**. macOS and Linux support is planned; packages for those platforms are not available yet.
 
 ---
 
